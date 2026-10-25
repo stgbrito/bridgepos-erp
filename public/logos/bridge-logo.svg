@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 290" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;display=swap');
+      .bg-clean { fill: #F8FAFC; }
+      .brand-title { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 32px; fill: #0F172A; letter-spacing: 2px; }
+      .brito-accent { font-weight: 800; fill: #0D9488; }
+      .text-bold { font-weight: 800; fill: #0F172A; }
+      .text-light { font-weight: 300; fill: #64748B; }
+      .srl-inline { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; font-weight: 700; fill: #94A3B8; letter-spacing: 2px; }
+      .tagline { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 600; fill: #475569; letter-spacing: 9px; text-transform: uppercase; }
+    </style>
+  </defs>
+
+  <!-- Fondo Limpio -->
+  <rect width="100%" height="100%" class="bg-clean" rx="16" />
+
+  <!-- Isotipo: El puente original centrado exactamente en X = 350 -->
+  <g transform="translate(350, 95)">
+    <!-- Base / Calzada -->
+    <rect x="-105" y="38" width="210" height="6" rx="3" fill="#0F172A" />
+
+    <!-- Pilares de Soporte -->
+    <rect x="-90" y="-18" width="18" height="56" rx="3" fill="#0F172A" />
+    <rect x="72" y="-18" width="18" height="56" rx="3" fill="#0F172A" />
+
+    <!-- Arco Maestro en Acento Cerceta/Esmeralda -->
+    <path d="M -90 12 C -48 -45, 48 -45, 90 12" fill="none" stroke="#0D9488" stroke-width="9" stroke-linecap="round" />
+
+    <!-- Arcos Interiores (Multiservicio) -->
+    <path d="M -66 22 C -35 -20, 35 -20, 66 22" fill="none" stroke="#14B8A6" stroke-width="5" stroke-linecap="round" opacity="0.85" />
+    <path d="M -42 30 C -20 0, 20 0, 42 30" fill="none" stroke="#5EEAD4" stroke-width="3.5" stroke-linecap="round" opacity="0.9" />
+
+    <!-- Nodos de Anclaje -->
+    <circle cx="-81" cy="-18" r="4" fill="#0D9488" />
+    <circle cx="81" cy="-18" r="4" fill="#0D9488" />
+  </g>
+
+  <!-- Nombre Corporativo: "BRIDGE TO SOLUTIONS" centrado exactamente en X = 350 -->
+  <text x="350" y="195" text-anchor="middle" class="brand-title">
+    <tspan class="brito-accent">BRI</tspan><tspan class="text-light">DGE </tspan><tspan class="brito-accent">TO </tspan><tspan class="text-bold">SOLUTIONS</tspan>
+  </text>
+
+  <!-- S.R.L. movido más a la derecha (x="588") para no chocar con SOLUTIONS -->
+  <text x="588" y="195" text-anchor="start" class="srl-inline">S.R.L.</text>
+
+  <!-- Línea divisoria compacta -->
+  <line x1="260" y1="216" x2="440" y2="216" stroke="#CBD5E1" stroke-width="1" />
+
+  <!-- Subtítulo centrado en X = 350 sin holgura excesiva -->
+  <text x="354" y="238" text-anchor="middle" class="tagline">INTEGRATED SERVICES</text>
+</svg>
