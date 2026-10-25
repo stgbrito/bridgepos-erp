@@ -445,11 +445,10 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   }
 
   // 3. SOLUCIONES BRITO Y METRO FOOD STATION
-  const baseUrl = import.meta.env.BASE_URL || '/';
   const imgSrc =
     brandId === 'sb-mantenimiento'
-      ? `${baseUrl}logos/sb-logo.png`
-      : `${baseUrl}logos/metro-logo.png`;
+      ? './logos/sb-logo.png'
+      : './logos/metro-logo.png';
 
   const altText =
     brandId === 'sb-mantenimiento' ? 'Soluciones Brito' : 'Metro Food Station';
