@@ -24,15 +24,17 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   className = '',
 }) => {
   const { width, height } =
-    variant === 'thermal' ? { width: 170, height: 64 } : PIXEL_DIMENSIONS[size];
+    variant === 'thermal' ? { width: 210, height: 80 } : PIXEL_DIMENSIONS[size];
 
   const isThermal = variant === 'thermal';
 
-  // 1. BRIDGE TO SOLUTIONS
+  // 1. BRIDGE TO SOLUTIONS (100% transparente sin <rect> de fondo ni bordes de contenedor)
   if (brandId === 'bridge-tech') {
     if (isThermal) {
       return (
-        <div className={`inline-flex items-center justify-center bg-white mx-auto shrink-0 ${className}`}>
+        <div
+          className={`inline-flex items-center justify-center mx-auto shrink-0 ${className}`}
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 700 270"
@@ -41,47 +43,67 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
             preserveAspectRatio="xMidYMid meet"
             style={{ display: 'block' }}
           >
-            <rect width="700" height="270" fill="#FFFFFF" />
             <g transform="translate(350, 92)">
-              <rect x="-110" y="38" width="220" height="10" rx="3" fill="#000000" />
-              <rect x="-92" y="-20" width="22" height="60" rx="3" fill="#000000" />
-              <rect x="70" y="-20" width="22" height="60" rx="3" fill="#000000" />
+              <rect
+                x="-110"
+                y="38"
+                width="220"
+                height="12"
+                rx="3"
+                fill="#000000"
+              />
+              <rect
+                x="-92"
+                y="-20"
+                width="24"
+                height="62"
+                rx="3"
+                fill="#000000"
+              />
+              <rect
+                x="68"
+                y="-20"
+                width="24"
+                height="62"
+                rx="3"
+                fill="#000000"
+              />
               <path
                 d="M -90 12 C -48 -45, 48 -45, 90 12"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="12"
+                strokeWidth="14"
                 strokeLinecap="round"
               />
               <path
                 d="M -66 22 C -35 -20, 35 -20, 66 22"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="8"
+                strokeWidth="10"
                 strokeLinecap="round"
               />
               <path
                 d="M -42 30 C -20 0, 20 0, 42 30"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="6"
+                strokeWidth="7"
                 strokeLinecap="round"
               />
-              <circle cx="-81" cy="-20" r="6" fill="#000000" />
-              <circle cx="81" cy="-20" r="6" fill="#000000" />
+              <circle cx="-81" cy="-20" r="7" fill="#000000" />
+              <circle cx="81" cy="-20" r="7" fill="#000000" />
             </g>
 
             <text
               x="350"
-              y="195"
+              y="196"
               textAnchor="middle"
               fontFamily="Arial, sans-serif"
-              fontSize="36"
+              fontSize="40"
               fontWeight="800"
               fill="#000000"
               style={{
                 fontFamily: "'Plus Jakarta Sans', Arial, sans-serif",
-                fontSize: '36px',
+                fontSize: '40px',
                 fontWeight: 800,
                 fill: '#000000',
                 letterSpacing: '2px',
@@ -91,28 +113,28 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
             </text>
 
             <line
-              x1="220"
+              x1="200"
               y1="214"
-              x2="480"
+              x2="500"
               y2="214"
               stroke="#000000"
-              strokeWidth="3"
+              strokeWidth="4"
             />
 
             <text
               x="350"
-              y="242"
+              y="245"
               textAnchor="middle"
               fontFamily="Arial, sans-serif"
-              fontSize="15"
+              fontSize="18"
               fontWeight="800"
               fill="#000000"
               style={{
                 fontFamily: "'Plus Jakarta Sans', Arial, sans-serif",
-                fontSize: '15px',
+                fontSize: '18px',
                 fontWeight: 800,
                 fill: '#000000',
-                letterSpacing: '7px',
+                letterSpacing: '6px',
               }}
             >
               INTEGRATED SERVICES
@@ -124,7 +146,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
     return (
       <div
-        className={`inline-flex items-center justify-center shrink-0 rounded-xl bg-[#F8FAFC] border border-slate-200/80 p-1 ${className}`}
+        className={`inline-flex items-center justify-center shrink-0 ${className}`}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -134,8 +156,6 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           preserveAspectRatio="xMidYMid meet"
           style={{ display: 'block' }}
         >
-          <rect width="700" height="290" fill="#F8FAFC" rx="16" />
-
           <g transform="translate(350, 95)">
             <rect x="-105" y="38" width="210" height="6" rx="3" fill="#0F172A" />
             <rect x="-90" y="-18" width="18" height="56" rx="3" fill="#0F172A" />
@@ -242,11 +262,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     );
   }
 
-  // 2. JUANA DE JESÚS • ATELIER
+  // 2. JUANA DE JESÚS • ATELIER (100% transparente en default y trazos gruesos 14px en thermal)
   if (brandId === 'atelier') {
     if (isThermal) {
       return (
-        <div className={`inline-flex items-center justify-center bg-white mx-auto shrink-0 ${className}`}>
+        <div
+          className={`inline-flex items-center justify-center mx-auto shrink-0 ${className}`}
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 800 450"
@@ -255,44 +277,43 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
             preserveAspectRatio="xMidYMid meet"
             style={{ display: 'block' }}
           >
-            <rect width="800" height="450" fill="#FFFFFF" />
-
-            <g transform="translate(400, 150)">
+            <g transform="translate(400, 145)">
               <path
                 d="M -22 -10 C -15 15, -12 25, -28 65 C -35 85, -45 105, -55 115 C -20 120, 20 120, 55 115 C 45 105, 35 85, 28 65 C 12 25, 15 15, 22 -10"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="4"
+                strokeWidth="14"
                 strokeLinecap="round"
+                strokeLinejoin="round"
               />
               <path
                 d="M -16 35 Q 0 40 16 35"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="4"
-                strokeDasharray="4 2"
+                strokeWidth="14"
+                strokeLinecap="round"
               />
               <path
                 d="M 0 -70 C -35 -50, -40 -30, -22 -10"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="4"
+                strokeWidth="14"
                 strokeLinecap="round"
               />
               <path
                 d="M 0 -70 C 35 -50, 40 -30, 22 -10"
                 fill="none"
                 stroke="#000000"
-                strokeWidth="4"
+                strokeWidth="14"
                 strokeLinecap="round"
               />
               <path
-                d="M 0 -95 L 4 -40 L 0 50 L -4 -40 Z"
+                d="M 0 -95 L 9 -40 L 0 55 L -9 -40 Z"
                 fill="#000000"
                 stroke="#000000"
-                strokeWidth="2"
+                strokeWidth="4"
               />
-              <ellipse cx="0" cy="-70" rx="1.5" ry="5.5" fill="#FFFFFF" />
+              <ellipse cx="0" cy="-70" rx="2.5" ry="6.5" fill="#FFFFFF" />
             </g>
 
             <text
@@ -300,33 +321,33 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
               y="335"
               textAnchor="middle"
               fontFamily="Georgia, serif"
-              fontSize="40"
+              fontSize="52"
               fontWeight="800"
               fill="#000000"
               style={{
                 fontFamily: "'Bodoni Moda', Georgia, serif",
-                fontSize: '40px',
+                fontSize: '52px',
                 fontWeight: 800,
                 fill: '#000000',
-                letterSpacing: '8px',
+                letterSpacing: '6px',
               }}
             >
               JUANA DE JESÚS
             </text>
             <text
               x="400"
-              y="385"
+              y="392"
               textAnchor="middle"
               fontFamily="Arial, sans-serif"
-              fontSize="22"
+              fontSize="28"
               fontWeight="800"
               fill="#000000"
               style={{
                 fontFamily: "'Montserrat', Arial, sans-serif",
-                fontSize: '22px',
+                fontSize: '28px',
                 fontWeight: 800,
                 fill: '#000000',
-                letterSpacing: '14px',
+                letterSpacing: '12px',
               }}
             >
               • ATELIER •
@@ -338,7 +359,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
     return (
       <div
-        className={`inline-flex items-center justify-center shrink-0 rounded-xl bg-[#FAF9F6] border border-stone-200/90 p-1 ${className}`}
+        className={`inline-flex items-center justify-center shrink-0 ${className}`}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -348,42 +369,40 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           preserveAspectRatio="xMidYMid meet"
           style={{ display: 'block' }}
         >
-          <rect width="800" height="500" fill="#FAF9F6" rx="16" />
-
           <g transform="translate(400, 160)">
             <path
               d="M -22 -10 C -15 15, -12 25, -28 65 C -35 85, -45 105, -55 115 C -20 120, 20 120, 55 115 C 45 105, 35 85, 28 65 C 12 25, 15 15, 22 -10"
               fill="none"
               stroke="#B58A3E"
-              strokeWidth="2.8"
+              strokeWidth="3.2"
               strokeLinecap="round"
             />
             <path
               d="M -16 35 Q 0 40 16 35"
               fill="none"
               stroke="#B58A3E"
-              strokeWidth="2"
+              strokeWidth="2.4"
               strokeDasharray="3 2"
             />
             <path
               d="M 0 -70 C -35 -50, -40 -30, -22 -10"
               fill="none"
               stroke="#B58A3E"
-              strokeWidth="2.4"
+              strokeWidth="2.6"
               strokeLinecap="round"
             />
             <path
               d="M 0 -70 C 35 -50, 40 -30, 22 -10"
               fill="none"
               stroke="#B58A3E"
-              strokeWidth="2.4"
+              strokeWidth="2.6"
               strokeLinecap="round"
             />
             <path
-              d="M 0 -95 L 3 -40 L 0 50 L -3 -40 Z"
+              d="M 0 -95 L 3.5 -40 L 0 50 L -3.5 -40 Z"
               fill="#996515"
             />
-            <ellipse cx="0" cy="-70" rx="1.3" ry="5.5" fill="#FAF9F6" />
+            <ellipse cx="0" cy="-70" rx="1.3" ry="5.5" fill="#FFFFFF" />
           </g>
 
           <text
@@ -425,24 +444,25 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     );
   }
 
-  // 3. SOLUCIONES BRITO Y METRO FOOD STATION (URL local sin crossOrigin="anonymous" y alto contraste en térmico)
+  // 3. SOLUCIONES BRITO Y METRO FOOD STATION
+  const baseUrl = import.meta.env.BASE_URL || '/';
   const imgSrc =
     brandId === 'sb-mantenimiento'
-      ? '/logos/sb-logo.png'
-      : '/logos/metro-logo.png';
+      ? `${baseUrl}logos/sb-logo.png`
+      : `${baseUrl}logos/metro-logo.png`;
 
   const altText =
     brandId === 'sb-mantenimiento' ? 'Soluciones Brito' : 'Metro Food Station';
 
   const imgWidth = isThermal
-    ? 150
+    ? 210
     : size === 'sm'
     ? 130
     : size === 'lg'
     ? 230
     : 180;
   const imgHeight = isThermal
-    ? 56
+    ? 80
     : size === 'sm'
     ? 52
     : size === 'lg'
@@ -452,10 +472,9 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   return (
     <div
       className={`inline-flex items-center justify-center shrink-0 ${
-        isThermal
-          ? 'bg-white mx-auto'
-          : 'rounded-xl bg-white border border-slate-200/80 p-1.5'
+        isThermal ? 'mx-auto bg-white' : ''
       } ${className}`}
+      style={isThermal ? { backgroundColor: '#FFFFFF' } : undefined}
     >
       <img
         src={imgSrc}
@@ -467,8 +486,12 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           width: `${imgWidth}px`,
           height: `${imgHeight}px`,
           display: 'block',
+          backgroundColor: '#FFFFFF',
           ...(isThermal
-            ? { filter: 'grayscale(100%) contrast(300%) brightness(0.8)' }
+            ? {
+                filter: 'grayscale(100%) contrast(250%) brightness(1.15)',
+                mixBlendMode: 'multiply',
+              }
             : {}),
         }}
       />

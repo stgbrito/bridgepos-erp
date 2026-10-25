@@ -1,21 +1,26 @@
 import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowRight,
   Calendar,
   Check,
   CreditCard,
   FileText,
+  Layers,
   MessageCircle,
   Plus,
   Printer,
   Ruler,
   Search,
+  Tag,
   Trash2,
   Wrench,
   X,
 } from 'lucide-react';
 import {
   db,
+  INITIAL_PROMO_CODES,
+  logAuditAction,
   type AtelierOrderSpec,
   type BrandProfile,
   type CatalogItem,
@@ -111,6 +116,19 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
 
   // Ítems del formulario
   const [formItems, setFormItems] = useState<InvoiceItem[]>([]);
+  const [separateLaborAndMaterials, setSeparateLaborAndMaterials] =
+    useState<boolean>(false);
+
+  // Descuento y Código Promocional en Orden
+  const [promoCodeInput, setPromoCodeInput] = useState<string>('');
+  const [appliedPromoCode, setAppliedPromoCode] = useState<string>('');
+  const [manualDiscountType, setManualDiscountType] = useState<
+    'PERCENT' | 'FIXED'
+  >('PERCENT');
+  const [manualDiscountValue, setManualDiscountValue] = useState<number>(0);
+
+  const promoCodes =
+    useLiveQuery(() => db.promoCodes.toArray(), []) ?? INITIAL_PROMO_CODES;
 
   // Campos dinámicos: Atelier vs Técnico
   const [atelierSpec, setAtelierSpec] = useState<AtelierOrderSpec>({
@@ -199,6 +217,9 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
               quantity: 1,
               unit: defaultCatalog.unit,
               unitPrice: defaultCatalog.price,
+              costType: defaultCatalog.isService
+                ? 'MANO_DE_OBRA'
+                : 'MATERIALES',
             },
           ]
         : [
@@ -208,9 +229,14 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
               quantity: 1,
               unit: 'SERV',
               unitPrice: 0,
+              costType: 'MANO_DE_OBRA',
             },
           ]
     );
+    setSeparateLaborAndMaterials(false);
+    setPromoCodeInput('');
+    setAppliedPromoCode('');
+    setManualDiscountValue(0);
 
     setAtelierSpec({
       bust: '',
@@ -266,6 +292,7 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
         quantity: 1,
         unit: catItem.unit,
         unitPrice: catItem.price,
+        costType: catItem.isService ? 'MANO_DE_OBRA' : 'MATERIALES',
       },
     ]);
   };
@@ -285,10 +312,47 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
     setFormItems((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const formSubtotal = formItems.reduce(
+  const formGrossSubtotal = formItems.reduce(
     (acc, item) => acc + roundCurrency(item.quantity * item.unitPrice),
     0
   );
+
+  const formDiscountAmount = (() => {
+    if (manualDiscountValue <= 0) return 0;
+    if (manualDiscountType === 'PERCENT') {
+      return roundCurrency(
+        formGrossSubtotal * (Math.min(100, manualDiscountValue) / 100)
+      );
+    }
+    return Math.min(formGrossSubtotal, roundCurrency(manualDiscountValue));
+  })();
+
+  const formSubtotal = Math.max(
+    0,
+    roundCurrency(formGrossSubtotal - formDiscountAmount)
+  );
+
+  const formLaborSubtotal = formItems
+    .filter((i) => (i.costType || 'MANO_DE_OBRA') === 'MANO_DE_OBRA')
+    .reduce((acc, i) => acc + roundCurrency(i.quantity * i.unitPrice), 0);
+
+  const formMaterialsSubtotal = formItems
+    .filter((i) => i.costType === 'MATERIALES')
+    .reduce((acc, i) => acc + roundCurrency(i.quantity * i.unitPrice), 0);
+
+  const handleApplyPromoCode = () => {
+    const clean = promoCodeInput.trim().toUpperCase();
+    if (!clean) return;
+    const found = promoCodes.find((p) => p.code.toUpperCase() === clean && p.active);
+    if (!found) {
+      showToast(`El código "${clean}" no existe o está inactivo.`);
+      return;
+    }
+    setManualDiscountType(found.type);
+    setManualDiscountValue(found.value);
+    setAppliedPromoCode(found.code);
+    showToast(`Código ${found.code} aplicado (${found.description}).`);
+  };
 
   const computedInitialDeposit = (() => {
     if (createKind === 'QUOTE' || initialPaymentMode === 'NONE') return 0;
@@ -356,6 +420,9 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
       items: validItems,
       isFiscal: false,
       subtotal: formSubtotal,
+      discountTotal: formDiscountAmount,
+      promoCodeApplied: appliedPromoCode || undefined,
+      separateLaborAndMaterials,
       itbisAmount: 0,
       totalAmount,
       amountPaid: paid,
@@ -369,6 +436,13 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
     };
 
     const id = await db.serviceOrders.add(newOrder);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: createKind === 'QUOTE' ? 'CREAR_COTIZACION' : 'CREAR_ORDEN',
+      details: `${orderCode} para ${clientName.trim()} por RD$ ${totalAmount}${
+        formDiscountAmount > 0 ? ` (Desc: RD$ ${formDiscountAmount})` : ''
+      }`,
+    });
     setCreateModalOpen(false);
     showToast(
       createKind === 'QUOTE'
@@ -605,6 +679,9 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
       createdAt: order.updatedAt || order.createdAt,
       items: order.items,
       subtotal: order.subtotal,
+      discountTotal: order.discountTotal,
+      promoCodeApplied: order.promoCodeApplied,
+      separateLaborAndMaterials: order.separateLaborAndMaterials,
       itbisAmount: order.itbisAmount,
       totalAmount: order.totalAmount,
       amountPaid: order.amountPaid,
@@ -1416,12 +1493,27 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
                 </div>
               )}
 
-              {/* ÍTEMS DE LA ORDEN + BOTONES RÁPIDOS DEL CATÁLOGO */}
+              {/* ÍTEMS DE LA ORDEN + TOGGLE SEPARAR MANO DE OBRA Y MATERIALES */}
               <div className="space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="font-semibold text-slate-700">
-                    Servicios / Ítems a Facturar
-                  </label>
+                  <div className="flex items-center gap-3">
+                    <label className="font-semibold text-slate-700">
+                      Servicios / Ítems a Facturar
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 cursor-pointer text-[11px] font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={separateLaborAndMaterials}
+                        onChange={(e) =>
+                          setSeparateLaborAndMaterials(e.target.checked)
+                        }
+                        className="rounded accent-slate-900"
+                      />
+                      <Layers className="w-3.5 h-3.5 text-teal-600" />
+                      <span>Separar Mano de Obra y Materiales</span>
+                    </label>
+                  </div>
+
                   <div className="flex flex-wrap items-center gap-1.5">
                     {brandCatalog.map((cat) => (
                       <button
@@ -1430,7 +1522,7 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
                         onClick={() => handleAddCatalogItemToForm(cat)}
                         className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium transition-colors"
                       >
-                        + {cat.name.slice(0, 28)}...
+                        + {cat.name.slice(0, 26)}...
                       </button>
                     ))}
                   </div>
@@ -1444,7 +1536,7 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
                     >
                       <input
                         type="text"
-                        placeholder="Descripción del servicio o producto"
+                        placeholder="Descripción del servicio o material"
                         value={item.description}
                         onChange={(e) =>
                           handleUpdateFormItem(
@@ -1453,8 +1545,28 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
                             e.target.value
                           )
                         }
-                        className="col-span-6 rounded-xl border border-slate-200 px-3 py-1.5"
+                        className={`${
+                          separateLaborAndMaterials
+                            ? 'col-span-4'
+                            : 'col-span-6'
+                        } rounded-xl border border-slate-200 px-3 py-1.5`}
                       />
+                      {separateLaborAndMaterials && (
+                        <select
+                          value={item.costType || 'MANO_DE_OBRA'}
+                          onChange={(e) =>
+                            handleUpdateFormItem(
+                              item.id,
+                              'costType',
+                              e.target.value
+                            )
+                          }
+                          className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-semibold"
+                        >
+                          <option value="MANO_DE_OBRA">Mano de Obra</option>
+                          <option value="MATERIALES">Materiales / Tela</option>
+                        </select>
+                      )}
                       <input
                         type="number"
                         min={1}
@@ -1490,6 +1602,92 @@ export const ServiceOrdersView: React.FC<ServiceOrdersViewProps> = ({
                       </button>
                     </div>
                   ))}
+                </div>
+
+                {separateLaborAndMaterials && (
+                  <div className="flex items-center justify-end gap-4 pt-1 text-[11px] font-mono text-slate-600">
+                    <span>
+                      Subt. Mano de Obra:{' '}
+                      <strong className="text-slate-900">
+                        RD$ {formLaborSubtotal.toLocaleString('es-DO')}
+                      </strong>
+                    </span>
+                    <span>
+                      Subt. Materiales:{' '}
+                      <strong className="text-slate-900">
+                        RD$ {formMaterialsSubtotal.toLocaleString('es-DO')}
+                      </strong>
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* DESCUENTO Y CÓDIGO PROMOCIONAL */}
+              <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Descuento o Código Promocional</span>
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Código (ej. VIP10)"
+                      value={promoCodeInput}
+                      onChange={(e) =>
+                        setPromoCodeInput(e.target.value.toUpperCase())
+                      }
+                      className="w-32 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-mono text-xs uppercase"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyPromoCode}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold"
+                    >
+                      Aplicar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">
+                      Descuento manual:
+                    </span>
+                    <select
+                      value={manualDiscountType}
+                      onChange={(e) =>
+                        setManualDiscountType(
+                          e.target.value as 'PERCENT' | 'FIXED'
+                        )
+                      }
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold"
+                    >
+                      <option value="PERCENT">% Porcentaje</option>
+                      <option value="FIXED">RD$ Monto Fijo</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      value={manualDiscountValue}
+                      onChange={(e) => {
+                        setManualDiscountValue(Number(e.target.value));
+                        setAppliedPromoCode('');
+                      }}
+                      className="w-24 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-mono text-xs"
+                    />
+                  </div>
+
+                  {formDiscountAmount > 0 && (
+                    <span className="font-mono text-xs font-bold text-rose-600">
+                      - RD${' '}
+                      {formDiscountAmount.toLocaleString('es-DO', {
+                        minimumFractionDigits: 2,
+                      })}
+                      {appliedPromoCode ? ` (${appliedPromoCode})` : ''}
+                    </span>
+                  )}
                 </div>
               </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Check,
   Edit3,
@@ -7,12 +7,15 @@ import {
   Plus,
   Ruler,
   Search,
+  Sparkles,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
 import {
   db,
+  logAuditAction,
+  type BrandId,
   type BrandProfile,
   type CatalogItem,
   type ClientProfile,
@@ -22,6 +25,75 @@ interface ClientsCatalogViewProps {
   activeBrand: BrandProfile;
   clients: ClientProfile[];
   catalogItems: CatalogItem[];
+}
+
+const DEFAULT_CATEGORIES_BY_BRAND: Record<BrandId, string[]> = {
+  'bridge-tech': [
+    'Smart Home',
+    'Redes & IT',
+    'Seguridad Electrónica',
+    'Software',
+    'Equipos & Accesorios',
+  ],
+  atelier: ['Alta Costura', 'Nupcial', 'Uniformes', 'Sastrería', 'Telas & Insumos'],
+  'sb-mantenimiento': [
+    'Climatización',
+    'Mantenimiento',
+    'Electricidad',
+    'Repuestos',
+    'Plomería',
+  ],
+  'metro-food': [
+    'Platos Fuertes',
+    'Parrilla',
+    'Bebidas',
+    'Postres',
+    'Entradas',
+    'Eventos',
+  ],
+};
+
+const STANDARD_UNITS: { code: string; label: string }[] = [
+  { code: 'UND', label: 'UND • Unidad' },
+  { code: 'SERV', label: 'SERV • Servicio' },
+  { code: 'PZA', label: 'PZA • Pieza' },
+  { code: 'PROY', label: 'PROY • Proyecto' },
+  { code: 'ORD', label: 'ORD • Orden / Plato' },
+  { code: 'KIT', label: 'KIT • Kit Completo' },
+  { code: 'SET', label: 'SET • Conjunto / Set' },
+  { code: 'LIC', label: 'LIC • Licencia' },
+  { code: 'MTS', label: 'MTS • Metros' },
+  { code: 'LB', label: 'LB • Libras' },
+  { code: 'GAL', label: 'GAL • Galón' },
+];
+
+function getBrandShortPrefix(brandId: BrandId): string {
+  switch (brandId) {
+    case 'bridge-tech':
+      return 'BT';
+    case 'atelier':
+      return 'AT';
+    case 'sb-mantenimiento':
+      return 'SB';
+    case 'metro-food':
+      return 'MF';
+  }
+}
+
+function buildSmartSku(
+  brandId: BrandId,
+  category: string,
+  existingItems: CatalogItem[]
+): string {
+  const brandPrefix = getBrandShortPrefix(brandId);
+  const cleanCat = (category || 'GEN')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z]/g, '')
+    .toUpperCase();
+  const catPrefix = (cleanCat.slice(0, 3) || 'GEN').padEnd(3, 'X');
+  const nextNum = existingItems.filter((i) => i.brandId === brandId).length + 1;
+  return `${brandPrefix}-${catPrefix}-${String(nextNum).padStart(2, '0')}`;
 }
 
 export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
@@ -39,10 +111,15 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
   const [itemCode, setItemCode] = useState<string>('');
   const [itemName, setItemName] = useState<string>('');
   const [itemCategory, setItemCategory] = useState<string>('');
+  const [isCustomCategory, setIsCustomCategory] = useState<boolean>(false);
+  const [customCategoryText, setCustomCategoryText] = useState<string>('');
   const [itemUnit, setItemUnit] = useState<string>('SERV');
+  const [isCustomUnit, setIsCustomUnit] = useState<boolean>(false);
+  const [customUnitText, setCustomUnitText] = useState<string>('');
   const [itemPrice, setItemPrice] = useState<number>(0);
   const [itemIsService, setItemIsService] = useState<boolean>(true);
   const [itemStock, setItemStock] = useState<number>(10);
+  const [itemStation, setItemStation] = useState<'COCINA' | 'BAR'>('COCINA');
 
   // Modal de Cliente (Crear / Editar Cliente + Medidas Atelier)
   const [clientModalOpen, setClientModalOpen] = useState<boolean>(false);
@@ -68,6 +145,15 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
       setNotice((prev) => (prev === msg ? null : prev));
     }, 3000);
   };
+
+  // Categorías dinámicas combinando las predefinidas + las ya guardadas en la marca
+  const availableCategories = useMemo(() => {
+    const defaults = DEFAULT_CATEGORIES_BY_BRAND[activeBrand.id] || ['General'];
+    const fromDb = catalogItems
+      .filter((i) => i.brandId === activeBrand.id)
+      .map((i) => i.category);
+    return Array.from(new Set([...defaults, ...fromDb]));
+  }, [activeBrand.id, catalogItems]);
 
   // Filtrar catálogo por la unidad de negocio activa
   const brandCatalog = catalogItems.filter(
@@ -95,51 +181,101 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
       setItemCode(item.code);
       setItemName(item.name);
       setItemCategory(item.category);
-      setItemUnit(item.unit);
+      setIsCustomCategory(false);
+      setCustomCategoryText('');
+      const unitExists = STANDARD_UNITS.some((u) => u.code === item.unit);
+      setItemUnit(unitExists ? item.unit : 'UND');
+      setIsCustomUnit(!unitExists);
+      setCustomUnitText(!unitExists ? item.unit : '');
       setItemPrice(item.price);
       setItemIsService(item.isService);
-      setItemStock(item.stock ?? 0);
+      setItemStock(item.stock ?? 10);
+      setItemStation(item.station || 'COCINA');
     } else {
       setEditingItem(null);
-      const prefix = activeBrand.id.slice(0, 2).toUpperCase();
-      setItemCode(`${prefix}-${String(brandCatalog.length + 1).padStart(2, '0')}`);
+      const defaultCat = availableCategories[0] || 'General';
+      setItemCategory(defaultCat);
+      setIsCustomCategory(false);
+      setCustomCategoryText('');
+      setItemCode(buildSmartSku(activeBrand.id, defaultCat, catalogItems));
       setItemName('');
-      setItemCategory('General');
-      setItemUnit('SERV');
+      setItemUnit(activeBrand.id === 'metro-food' ? 'UND' : 'SERV');
+      setIsCustomUnit(false);
+      setCustomUnitText('');
       setItemPrice(0);
-      setItemIsService(true);
-      setItemStock(10);
+      setItemIsService(activeBrand.id !== 'metro-food');
+      setItemStock(20);
+      setItemStation('COCINA');
     }
     setItemModalOpen(true);
+  };
+
+  // Al cambiar de categoría en modo creación, actualizar el código inteligente sugerido
+  const handleCategoryChange = (val: string) => {
+    if (val === '__NEW__') {
+      setIsCustomCategory(true);
+      setCustomCategoryText('');
+      return;
+    }
+    setIsCustomCategory(false);
+    setItemCategory(val);
+    if (!editingItem) {
+      setItemCode(buildSmartSku(activeBrand.id, val, catalogItems));
+    }
+    if (activeBrand.id === 'metro-food') {
+      setItemStation(val.toLowerCase().includes('bebida') ? 'BAR' : 'COCINA');
+    }
   };
 
   const handleSaveCatalogItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!itemName.trim()) return;
 
+    const finalCategory = isCustomCategory
+      ? customCategoryText.trim() || 'General'
+      : itemCategory.trim() || 'General';
+
+    const finalUnit = isCustomUnit
+      ? customUnitText.trim().toUpperCase() || 'UND'
+      : itemUnit.trim().toUpperCase() || 'UND';
+
     const payload: CatalogItem = {
       ...(editingItem?.id ? { id: editingItem.id } : {}),
       brandId: activeBrand.id,
-      code: itemCode.trim().toUpperCase() || 'ITEM-01',
+      code:
+        itemCode.trim().toUpperCase() ||
+        buildSmartSku(activeBrand.id, finalCategory, catalogItems),
       name: itemName.trim(),
-      category: itemCategory.trim() || 'General',
-      unit: itemUnit.trim().toUpperCase() || 'UND',
+      category: finalCategory,
+      unit: finalUnit,
       price: Math.max(0, Number(itemPrice)),
       isService: itemIsService,
       stock: itemIsService ? undefined : Math.max(0, Number(itemStock)),
+      station: activeBrand.id === 'metro-food' ? itemStation : undefined,
       active: true,
     };
 
     await db.catalogItems.put(payload);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: editingItem ? 'EDITAR_CATALOGO' : 'CREAR_CATALOGO',
+      details: `${payload.code} - ${payload.name} (RD$ ${payload.price})`,
+    });
+
     setItemModalOpen(false);
     showNotice(
       editingItem ? 'Ítem actualizado en el catálogo.' : 'Nuevo ítem agregado.'
     );
   };
 
-  const handleDeleteCatalogItem = async (id?: number) => {
-    if (!id) return;
-    await db.catalogItems.delete(id);
+  const handleDeleteCatalogItem = async (item: CatalogItem) => {
+    if (!item.id) return;
+    await db.catalogItems.delete(item.id);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'ELIMINAR_CATALOGO',
+      details: `Eliminado ítem ${item.code} - ${item.name}`,
+    });
     showNotice('Ítem eliminado del catálogo.');
   };
 
@@ -302,6 +438,7 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                   <th className="py-3.5 px-4">Código</th>
                   <th className="py-3.5 px-4">Servicio / Producto</th>
                   <th className="py-3.5 px-4">Categoría</th>
+                  <th className="py-3.5 px-4">Tipo / Stock</th>
                   <th className="py-3.5 px-4">Unidad</th>
                   <th className="py-3.5 px-4 text-right">Precio RD$</th>
                   <th className="py-3.5 px-4 text-right">Acciones</th>
@@ -324,6 +461,17 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                         {item.category}
                       </span>
                     </td>
+                    <td className="py-3.5 px-4">
+                      {item.isService ? (
+                        <span className="text-[11px] text-sky-700 font-medium">
+                          Servicio
+                        </span>
+                      ) : (
+                        <span className="font-mono text-[11px] text-emerald-700 font-semibold">
+                          Stock: {item.stock ?? 0}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3.5 px-4 font-mono text-slate-500">
                       {item.unit}
                     </td>
@@ -345,7 +493,7 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteCatalogItem(item.id)}
+                          onClick={() => handleDeleteCatalogItem(item)}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
                           title="Eliminar"
                         >
@@ -447,7 +595,7 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
         </div>
       )}
 
-      {/* MODAL DE ÍTEM DE CATÁLOGO */}
+      {/* MODAL DE ÍTEM DE CATÁLOGO CON DROPDOWNS Y AUTOCOMPLETADO INTELIGENTE */}
       {itemModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden">
@@ -468,28 +616,76 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
               onSubmit={handleSaveCatalogItem}
               className="p-6 space-y-4 text-xs"
             >
+              {/* CATEGORÍA CON DROPDOWN + OPCIÓN CREAR NUEVA */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-medium text-slate-600 block mb-1">
-                    Código
+                    Categoría
                   </label>
+                  <select
+                    value={isCustomCategory ? '__NEW__' : itemCategory}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white font-medium"
+                  >
+                    {availableCategories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                    <option value="__NEW__">+ Crear nueva categoría...</option>
+                  </select>
+                  {isCustomCategory && (
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nombre de nueva categoría"
+                      value={customCategoryText}
+                      onChange={(e) => {
+                        setCustomCategoryText(e.target.value);
+                        if (!editingItem) {
+                          setItemCode(
+                            buildSmartSku(
+                              activeBrand.id,
+                              e.target.value,
+                              catalogItems
+                            )
+                          );
+                        }
+                      }}
+                      className="w-full mt-1.5 rounded-xl border border-teal-400 px-3 py-1.5"
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-medium text-slate-600">
+                      Código (Auto)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setItemCode(
+                          buildSmartSku(
+                            activeBrand.id,
+                            isCustomCategory ? customCategoryText : itemCategory,
+                            catalogItems
+                          )
+                        )
+                      }
+                      className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-teal-700 hover:text-teal-600"
+                      title="Sugerir código automático"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>Sugerir</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     required
                     value={itemCode}
                     onChange={(e) => setItemCode(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="font-medium text-slate-600 block mb-1">
-                    Categoría
-                  </label>
-                  <input
-                    type="text"
-                    value={itemCategory}
-                    onChange={(e) => setItemCategory(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono font-bold text-slate-900"
                   />
                 </div>
               </div>
@@ -503,6 +699,7 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                   required
                   value={itemName}
                   onChange={(e) => setItemName(e.target.value)}
+                  placeholder="Ej. Instalación A/C Split o Vestido de Gala"
                   className="w-full rounded-xl border border-slate-200 px-3 py-2"
                 />
               </div>
@@ -510,15 +707,40 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-medium text-slate-600 block mb-1">
-                    Unidad (SERV, UND, PIEZA)
+                    Unidad de Medida
                   </label>
-                  <input
-                    type="text"
-                    value={itemUnit}
-                    onChange={(e) => setItemUnit(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
-                  />
+                  <select
+                    value={isCustomUnit ? '__OTHER__' : itemUnit}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomUnit(true);
+                        setCustomUnitText('');
+                      } else {
+                        setIsCustomUnit(false);
+                        setItemUnit(e.target.value);
+                      }
+                    }}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white font-mono"
+                  >
+                    {STANDARD_UNITS.map((u) => (
+                      <option key={u.code} value={u.code}>
+                        {u.label}
+                      </option>
+                    ))}
+                    <option value="__OTHER__">+ Otra unidad...</option>
+                  </select>
+                  {isCustomUnit && (
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej. CAJA, PAR, HRS"
+                      value={customUnitText}
+                      onChange={(e) => setCustomUnitText(e.target.value)}
+                      className="w-full mt-1.5 rounded-xl border border-teal-400 px-3 py-1.5 font-mono uppercase"
+                    />
+                  )}
                 </div>
+
                 <div>
                   <label className="font-medium text-slate-600 block mb-1">
                     Precio RD$
@@ -534,6 +756,74 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                   />
                 </div>
               </div>
+
+              {/* TIPO DE ÍTEM (SERVICIO VS PRODUCTO CON STOCK) + ESTACIÓN EN RESTAURANTE */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="font-medium text-slate-600 block mb-1">
+                    Naturaleza del Ítem
+                  </label>
+                  <select
+                    value={itemIsService ? 'SERVICE' : 'PRODUCT'}
+                    onChange={(e) =>
+                      setItemIsService(e.target.value === 'SERVICE')
+                    }
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white"
+                  >
+                    <option value="SERVICE">Servicio / Mano de Obra</option>
+                    <option value="PRODUCT">Producto Físico (Con Stock)</option>
+                  </select>
+                </div>
+
+                {!itemIsService ? (
+                  <div>
+                    <label className="font-medium text-slate-600 block mb-1">
+                      Stock Disponible
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={itemStock}
+                      onChange={(e) => setItemStock(Number(e.target.value))}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono font-bold"
+                    />
+                  </div>
+                ) : activeBrand.id === 'metro-food' ? (
+                  <div>
+                    <label className="font-medium text-slate-600 block mb-1">
+                      Estación de Comanda
+                    </label>
+                    <select
+                      value={itemStation}
+                      onChange={(e) =>
+                        setItemStation(e.target.value as 'COCINA' | 'BAR')
+                      }
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white font-bold"
+                    >
+                      <option value="COCINA">COCINA</option>
+                      <option value="BAR">BAR / BEBIDAS</option>
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+
+              {activeBrand.id === 'metro-food' && !itemIsService && (
+                <div>
+                  <label className="font-medium text-slate-600 block mb-1">
+                    Estación de Comanda (Restaurante)
+                  </label>
+                  <select
+                    value={itemStation}
+                    onChange={(e) =>
+                      setItemStation(e.target.value as 'COCINA' | 'BAR')
+                    }
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white font-bold"
+                  >
+                    <option value="COCINA">COCINA (Platos / Postres)</option>
+                    <option value="BAR">BAR (Bebidas / Tragos)</option>
+                  </select>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button

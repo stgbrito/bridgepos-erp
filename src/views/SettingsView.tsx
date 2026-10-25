@@ -1,17 +1,29 @@
 import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Check,
   Edit3,
   FileText,
+  History,
   Layers,
   Phone,
+  Plus,
   Printer,
   Receipt,
+  RotateCcw,
   Save,
+  Search,
+  Shield,
+  Tag,
+  Trash2,
+  Users,
+  UtensilsCrossed,
   X,
 } from 'lucide-react';
 import {
   db,
+  INITIAL_RESTAURANT_TABLES,
+  logAuditAction,
   type BrandId,
   type BrandProfile,
   type CorporateConfig,
@@ -21,6 +33,7 @@ import {
   type ModuleType,
   type NCFSequence,
   type NCFType,
+  type UserRole,
 } from '../db/db';
 import {
   buildDocumentHeaderMetadata,
@@ -40,7 +53,14 @@ interface SettingsViewProps {
   recentDocuments: IssuedDocument[];
 }
 
-type SettingsTab = 'NCF_TABLE' | 'BRANDS_GRID' | 'INVOICE_PREVIEW';
+type SettingsTab =
+  | 'NCF_TABLE'
+  | 'BRANDS_GRID'
+  | 'STAFF_USERS'
+  | 'PROMO_CODES'
+  | 'RESTAURANT_TABLES'
+  | 'AUDIT_LOGS'
+  | 'INVOICE_PREVIEW';
 
 const MODULE_SWITCHES: {
   id: ModuleType;
@@ -59,6 +79,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   ncfSequences,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('NCF_TABLE');
+
+  // Consultas reactivas para el panel de Administración
+  const staffUsers = useLiveQuery(() => db.staffUsers.toArray(), []) || [];
+  const promoCodes = useLiveQuery(() => db.promoCodes.toArray(), []) || [];
+  const restaurantTables =
+    useLiveQuery(() => db.restaurantTables.toArray(), []) || [];
+  const auditLogs =
+    useLiveQuery(
+      () => db.auditLogs.orderBy('timestamp').reverse().limit(150).toArray(),
+      []
+    ) || [];
+
+  // Estados de Gestión de Usuarios
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserRole, setNewUserRole] = useState<UserRole>('CAJERO');
+  const [newUserPin, setNewUserPin] = useState('');
+
+  // Estados de Códigos de Descuento
+  const [newPromoCode, setNewPromoCode] = useState('');
+  const [newPromoDesc, setNewPromoDesc] = useState('');
+  const [newPromoType, setNewPromoType] = useState<'PERCENT' | 'FIXED'>(
+    'PERCENT'
+  );
+  const [newPromoValue, setNewPromoValue] = useState<number>(10);
+
+  // Filtro de Bitácora de Auditoría
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditRoleFilter, setAuditRoleFilter] = useState<string>('ALL');
 
   // Edición de fila en la tabla NCF
   const [editingType, setEditingType] = useState<NCFType | null>(null);
@@ -89,6 +137,107 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => {
       setNotice((prev) => (prev === msg ? null : prev));
     }, 3500);
+  };
+
+  // Handlers de Administración de Usuarios
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserName.trim()) return;
+    const pinClean = newUserPin.trim() || '0000';
+    const created = {
+      id: `USR-${Date.now()}`,
+      name: newUserName.trim(),
+      role: newUserRole,
+      pin: pinClean,
+      active: true,
+    };
+    await db.staffUsers.put(created);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'CREAR_USUARIO',
+      details: `Nuevo operador creado: ${created.name} (${created.role})`,
+    });
+    setNewUserName('');
+    setNewUserPin('');
+    showNotice(`Usuario ${created.name} agregado.`);
+  };
+
+  const handleToggleUserStatus = async (userId: string, current: boolean) => {
+    await db.staffUsers.update(userId, { active: !current });
+    showNotice('Estado de usuario actualizado.');
+  };
+
+  const handleDeleteUser = async (userId: string, name: string) => {
+    if (staffUsers.length <= 1) {
+      showNotice('Debe existir al menos un usuario en el sistema.');
+      return;
+    }
+    await db.staffUsers.delete(userId);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'ELIMINAR_USUARIO',
+      details: `Usuario eliminado: ${name}`,
+    });
+    showNotice(`Usuario ${name} eliminado.`);
+  };
+
+  // Handlers de Códigos de Descuento
+  const handleCreatePromo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = newPromoCode.trim().toUpperCase();
+    if (!cleanCode || newPromoValue <= 0) return;
+
+    await db.promoCodes.put({
+      code: cleanCode,
+      description:
+        newPromoDesc.trim() ||
+        (newPromoType === 'PERCENT'
+          ? `Descuento ${newPromoValue}%`
+          : `Bono RD$ ${newPromoValue}`),
+      type: newPromoType,
+      value: Number(newPromoValue),
+      active: true,
+    });
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'CREAR_CODIGO_PROMO',
+      details: `Código ${cleanCode} (${newPromoType === 'PERCENT' ? `${newPromoValue}%` : `RD$ ${newPromoValue}`}) creado`,
+    });
+    setNewPromoCode('');
+    setNewPromoDesc('');
+    showNotice(`Código promocional ${cleanCode} guardado.`);
+  };
+
+  const handleTogglePromo = async (code: string, current: boolean) => {
+    await db.promoCodes.update(code, { active: !current });
+    showNotice(`Código ${code} ${!current ? 'activado' : 'desactivado'}.`);
+  };
+
+  const handleDeletePromo = async (code: string) => {
+    await db.promoCodes.delete(code);
+    showNotice(`Código ${code} eliminado.`);
+  };
+
+  // Handlers de Mesas del Restaurante
+  const handleDeleteTable = async (tableId: string, tableName: string) => {
+    await db.restaurantTables.delete(tableId);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'ELIMINAR_MESA',
+      details: `Mesa eliminada desde Configuración: ${tableName}`,
+    });
+    showNotice(`Mesa "${tableName}" eliminada.`);
+  };
+
+  const handleResetDefaultTables = async () => {
+    await db.restaurantTables.clear();
+    await db.restaurantTables.bulkPut(INITIAL_RESTAURANT_TABLES);
+    await logAuditAction({
+      brandId: activeBrand.id,
+      action: 'RESTAURAR_MESAS',
+      details: 'Mapa de mesas restaurado a los valores de fábrica',
+    });
+    showNotice('Mesas predeterminadas restauradas.');
   };
 
   const handleStartEdit = (seq: NCFSequence) => {
@@ -262,8 +411,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* NAVEGACIÓN DE PESTAÑAS (TABS LIMPIAS) */}
-      <div className="flex items-center justify-between border-b border-slate-200">
-        <div className="flex items-center gap-6">
+      <div className="flex items-center justify-between border-b border-slate-200 overflow-x-auto">
+        <div className="flex items-center gap-5 min-w-max">
           <button
             type="button"
             onClick={() => setActiveTab('NCF_TABLE')}
@@ -287,7 +436,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>Unidades de Negocio (Marcas)</span>
+            <span>Unidades de Negocio</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('STAFF_USERS')}
+            className={`inline-flex items-center gap-2 pb-3 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'STAFF_USERS'
+                ? 'border-slate-900 text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Usuarios y Roles</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('PROMO_CODES')}
+            className={`inline-flex items-center gap-2 pb-3 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'PROMO_CODES'
+                ? 'border-slate-900 text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Tag className="w-4 h-4" />
+            <span>Códigos de Descuento</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('RESTAURANT_TABLES')}
+            className={`inline-flex items-center gap-2 pb-3 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'RESTAURANT_TABLES'
+                ? 'border-slate-900 text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <UtensilsCrossed className="w-4 h-4" />
+            <span>Mesas del Restaurante</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('AUDIT_LOGS')}
+            className={`inline-flex items-center gap-2 pb-3 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'AUDIT_LOGS'
+                ? 'border-slate-900 text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <History className="w-4 h-4" />
+            <span>Bitácora de Auditoría</span>
           </button>
 
           <button
@@ -300,7 +501,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>Vista Previa de Factura / Recibo</span>
+            <span>Vista Previa Factura</span>
           </button>
         </div>
       </div>
@@ -939,6 +1140,499 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: GESTIÓN DE USUARIOS Y ROLES */}
+      {activeTab === 'STAFF_USERS' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          <div className="lg:col-span-4 bg-white rounded-xl border border-slate-200/90 p-5 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center">
+                <Users className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                  Nuevo Operador / Usuario
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Asigna permisos y rol operativo
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Nombre Completo / Alias *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Ej: María Fernanda (Caja 2)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Rol y Nivel de Acceso *
+                </label>
+                <select
+                  value={newUserRole}
+                  onChange={(e) => setNewUserRole(e.target.value as UserRole)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold focus:outline-none focus:border-slate-900"
+                >
+                  <option value="ADMIN">ADMIN (Acceso Total + Auditoría + Mesas)</option>
+                  <option value="CAJERO">CAJERO (Ventas POS + Cuentas + Órdenes)</option>
+                  <option value="CAMARERO">CAMARERO (Solo Salón Restaurante)</option>
+                  <option value="TECNICO">TECNICO (Órdenes de Servicio / Taller)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  PIN de Acceso Rápido (4 dígitos)
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={newUserPin}
+                  onChange={(e) => setNewUserPin(e.target.value)}
+                  placeholder="Ej: 4580"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Registrar Usuario</span>
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200/90 overflow-hidden shadow-xs">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Plantilla de Personal y Roles ({staffUsers.length})
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Puedes cambiar de operador activo en cualquier momento desde la barra superior
+                </p>
+              </div>
+              <Shield className="w-4 h-4 text-slate-400" />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">Operador</th>
+                    <th className="py-3 px-4">Rol Asignado</th>
+                    <th className="py-3 px-4">PIN</th>
+                    <th className="py-3 px-4">Estado</th>
+                    <th className="py-3 px-4 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/70 text-xs">
+                  {staffUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4 font-bold text-slate-900">
+                        {u.name}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
+                            u.role === 'ADMIN'
+                              ? 'bg-amber-100 text-amber-900'
+                              : u.role === 'CAJERO'
+                              ? 'bg-emerald-100 text-emerald-900'
+                              : u.role === 'CAMARERO'
+                              ? 'bg-sky-100 text-sky-900'
+                              : 'bg-purple-100 text-purple-900'
+                          }`}
+                        >
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-500">
+                        {u.pin}
+                      </td>
+                      <td className="py-3 px-4">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleUserStatus(u.id, u.active)}
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer ${
+                            u.active
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-slate-100 text-slate-500 border border-slate-200'
+                          }`}
+                        >
+                          {u.active ? 'Activo' : 'Inactivo'}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Eliminar usuario"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: CÓDIGOS DE DESCUENTO Y PROMOCIONES */}
+      {activeTab === 'PROMO_CODES' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          <div className="lg:col-span-4 bg-white rounded-xl border border-slate-200/90 p-5 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center">
+                <Tag className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                  Crear Código Promocional
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Válido en POS, Restaurante y Servicios
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleCreatePromo} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Código (Ej: VIP10, VERANO20) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newPromoCode}
+                  onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+                  placeholder="VIP15"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold uppercase focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Descripción / Motivo
+                </label>
+                <input
+                  type="text"
+                  value={newPromoDesc}
+                  onChange={(e) => setNewPromoDesc(e.target.value)}
+                  placeholder="Descuento Clientes Corporativos"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-slate-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Tipo
+                  </label>
+                  <select
+                    value={newPromoType}
+                    onChange={(e) =>
+                      setNewPromoType(e.target.value as 'PERCENT' | 'FIXED')
+                    }
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                  >
+                    <option value="PERCENT">Porcentaje (%)</option>
+                    <option value="FIXED">Monto Fijo (RD$)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Valor *
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={newPromoValue}
+                    onChange={(e) => setNewPromoValue(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Guardar Código</span>
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200/90 overflow-hidden shadow-xs">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                  Códigos de Descuento Activos ({promoCodes.length})
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Los cajeros pueden escribir estos códigos al facturar en cualquiera de las marcas
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">Código</th>
+                    <th className="py-3 px-4">Descripción</th>
+                    <th className="py-3 px-4">Beneficio</th>
+                    <th className="py-3 px-4">Estado</th>
+                    <th className="py-3 px-4 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/70 text-xs">
+                  {promoCodes.map((p) => (
+                    <tr key={p.code} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4 font-mono font-bold text-teal-800">
+                        {p.code}
+                      </td>
+                      <td className="py-3 px-4 text-slate-700">
+                        {p.description}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                        {p.type === 'PERCENT'
+                          ? `${p.value}% OFF`
+                          : `RD$ ${p.value.toLocaleString('es-DO')}`}
+                      </td>
+                      <td className="py-3 px-4">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePromo(p.code, p.active)}
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer ${
+                            p.active
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-slate-100 text-slate-500 border border-slate-200'
+                          }`}
+                        >
+                          {p.active ? 'Activo' : 'Pausado'}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePromo(p.code)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Eliminar código"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: GESTIÓN DE MESAS DEL RESTAURANTE */}
+      {activeTab === 'RESTAURANT_TABLES' && (
+        <div className="bg-white rounded-xl border border-slate-200/90 overflow-hidden shadow-xs">
+          <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Administración de Mesas del Restaurante ({restaurantTables.length})
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Elimina mesas que ya no utilices o restaura el plano original del salón
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetDefaultTables}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restaurar Mesas Predeterminadas</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-3 px-4">ID</th>
+                  <th className="py-3 px-4">Nombre de Mesa</th>
+                  <th className="py-3 px-4">Zona</th>
+                  <th className="py-3 px-4">Capacidad</th>
+                  <th className="py-3 px-4">Estado Actual</th>
+                  <th className="py-3 px-4 text-right">Eliminar</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200/70 text-xs">
+                {restaurantTables.map((t) => (
+                  <tr key={t.id} className="hover:bg-slate-50/80">
+                    <td className="py-3 px-4 font-mono text-slate-500">{t.id}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">{t.name}</td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                        {t.zone}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {t.capacity} personas
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          t.status === 'LIBRE'
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-amber-50 text-amber-800'
+                        }`}
+                      >
+                        {t.status} ({t.items.length} ítems)
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTable(t.id, t.name)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-rose-600 hover:bg-rose-50 text-[11px] font-semibold transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Eliminar</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: BITÁCORA DE AUDITORÍA */}
+      {activeTab === 'AUDIT_LOGS' && (
+        <div className="bg-white rounded-xl border border-slate-200/90 overflow-hidden shadow-xs">
+          <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Bitácora de Auditoría de Operaciones ({auditLogs.length})
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Registro histórico de facturación, descuentos, cambios de usuario y aperturas/cierres de mesas
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                  placeholder="Buscar por usuario o acción..."
+                  className="pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-slate-900"
+                />
+              </div>
+              <select
+                value={auditRoleFilter}
+                onChange={(e) => setAuditRoleFilter(e.target.value)}
+                className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-medium"
+              >
+                <option value="ALL">Todos los roles</option>
+                <option value="ADMIN">ADMIN</option>
+                <option value="CAJERO">CAJERO</option>
+                <option value="CAMARERO">CAMARERO</option>
+                <option value="TECNICO">TECNICO</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto max-h-[520px]">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
+                <tr className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="py-3 px-4">Fecha / Hora</th>
+                  <th className="py-3 px-4">Operador</th>
+                  <th className="py-3 px-4">Rol</th>
+                  <th className="py-3 px-4">Marca</th>
+                  <th className="py-3 px-4">Acción</th>
+                  <th className="py-3 px-4">Detalles</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200/70 text-xs">
+                {auditLogs
+                  .filter((log) => {
+                    if (
+                      auditRoleFilter !== 'ALL' &&
+                      log.userRole !== auditRoleFilter
+                    ) {
+                      return false;
+                    }
+                    if (!auditSearch.trim()) return true;
+                    const q = auditSearch.toLowerCase();
+                    return (
+                      log.userName.toLowerCase().includes(q) ||
+                      log.action.toLowerCase().includes(q) ||
+                      log.details.toLowerCase().includes(q) ||
+                      log.brandId.toLowerCase().includes(q)
+                    );
+                  })
+                  .map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50/80">
+                      <td className="py-2.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString('es-DO')}
+                      </td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">
+                        {log.userName}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                          {log.userRole}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-[11px] text-slate-600">
+                        {log.brandId}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono font-bold text-teal-800 text-[11px]">
+                        {log.action}
+                      </td>
+                      <td className="py-2.5 px-4 text-slate-700">
+                        {log.details}
+                      </td>
+                    </tr>
+                  ))}
+                {auditLogs.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="py-8 text-center text-slate-400 text-xs"
+                    >
+                      Aún no hay eventos registrados en la bitácora de auditoría.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -1,24 +1,35 @@
 import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Barcode,
   Check,
   CreditCard,
+  History,
+  Lock,
   Minus,
   Package,
   Plus,
   Printer,
+  RotateCcw,
   Search,
   ShoppingBag,
+  Tag,
   Trash2,
+  Unlock,
   User,
+  UserPlus,
+  X,
 } from 'lucide-react';
 import {
   db,
+  INITIAL_PROMO_CODES,
+  logAuditAction,
   type BrandProfile,
   type CatalogItem,
   type ClientProfile,
   type CorporateConfig,
   type InvoiceItem,
+  type IssuedDocument,
   type NCFSequence,
   type PaymentMethod,
 } from '../db/db';
@@ -50,6 +61,21 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [cart, setCart] = useState<InvoiceItem[]>([]);
+  const [expandedCartItemId, setExpandedCartItemId] = useState<string | null>(
+    null
+  );
+  const [allowPriceOverride, setAllowPriceOverride] = useState<boolean>(false);
+
+  // Descuento y Código Promocional en POS
+  const [promoCodeInput, setPromoCodeInput] = useState<string>('');
+  const [appliedPromoCode, setAppliedPromoCode] = useState<string>('');
+  const [globalDiscountType, setGlobalDiscountType] = useState<
+    'PERCENT' | 'FIXED'
+  >('PERCENT');
+  const [globalDiscountVal, setGlobalDiscountVal] = useState<number>(0);
+
+  const promoCodes =
+    useLiveQuery(() => db.promoCodes.toArray(), []) ?? INITIAL_PROMO_CODES;
 
   // Datos de cobro y modo fiscal
   const [selectedClientId, setSelectedClientId] = useState<string>('');
@@ -62,10 +88,32 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
   const [isFiscal, setIsFiscal] = useState<boolean>(false);
   const [ncfType, setNcfType] = useState<'B01' | 'B02'>('B02');
 
+  // Modal de Creación Rápida de Cliente
+  const [newClientModalOpen, setNewClientModalOpen] = useState<boolean>(false);
+  const [newClientName, setNewClientName] = useState<string>('');
+  const [newClientRnc, setNewClientRnc] = useState<string>('');
+  const [newClientPhone, setNewClientPhone] = useState<string>('');
+  const [newClientPrefNcf, setNewClientPrefNcf] = useState<'B01' | 'B02'>(
+    'B01'
+  );
+
   const [toast, setToast] = useState<string | null>(null);
   const [printData, setPrintData] = useState<PrintableDocumentData | null>(
     null
   );
+
+  // Historial reciente de ventas del POS en tiempo real
+  const recentSales =
+    useLiveQuery(
+      () =>
+        db.documents
+          .where('brandId')
+          .equals(activeBrand.id)
+          .reverse()
+          .limit(8)
+          .toArray(),
+      [activeBrand.id]
+    ) ?? [];
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -127,6 +175,8 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
           quantity: 1,
           unit: product.unit || 'UND',
           unitPrice: product.price,
+          discount: 0,
+          notes: '',
         },
       ]);
     }
@@ -174,6 +224,16 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
     );
   };
 
+  const handleUpdateItemField = (
+    id: string,
+    field: 'unitPrice' | 'discount' | 'notes',
+    value: number | string
+  ) => {
+    setCart((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+    );
+  };
+
   const handleRemoveItem = (id: string) => {
     setCart((prev) => prev.filter((item) => item.id !== id));
   };
@@ -195,10 +255,67 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
     }
   };
 
+  // Crear cliente rápido desde el POS
+  const handleQuickCreateClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClientName.trim()) return;
+
+    const id = await db.clients.add({
+      name: newClientName.trim(),
+      rncOrCedula: newClientRnc.trim(),
+      phone: newClientPhone.trim(),
+      preferredNcfType: newClientPrefNcf,
+      createdAt: new Date().toISOString(),
+    });
+
+    setSelectedClientId(String(id));
+    setCustomerName(newClientName.trim());
+    setCustomerRnc(newClientRnc.trim());
+    setCustomerPhone(newClientPhone.trim());
+    setNcfType(newClientPrefNcf);
+    setNewClientModalOpen(false);
+    setNewClientName('');
+    setNewClientRnc('');
+    setNewClientPhone('');
+    showToast('Cliente creado y seleccionado.');
+  };
+
+  const rawCartGross = cart.reduce(
+    (acc, item) => acc + roundCurrency(item.quantity * item.unitPrice),
+    0
+  );
+
+  const computedGlobalDiscount = (() => {
+    if (globalDiscountVal <= 0) return 0;
+    if (globalDiscountType === 'PERCENT') {
+      return roundCurrency(
+        rawCartGross * (Math.min(100, globalDiscountVal) / 100)
+      );
+    }
+    return Math.min(rawCartGross, roundCurrency(globalDiscountVal));
+  })();
+
+  const handleApplyPromoCode = () => {
+    const clean = promoCodeInput.trim().toUpperCase();
+    if (!clean) return;
+    const found = promoCodes.find(
+      (p) => p.code.toUpperCase() === clean && p.active
+    );
+    if (!found) {
+      showToast(`Código promocional "${clean}" inválido o inactivo.`);
+      return;
+    }
+    setGlobalDiscountType(found.type);
+    setGlobalDiscountVal(found.value);
+    setAppliedPromoCode(found.code);
+    showToast(`Código ${found.code} aplicado (${found.description}).`);
+  };
+
   const totals = calculateInvoiceTotals(cart, {
     isFiscal,
     includeLegalTip: false,
     depositPercentage: 100,
+    globalDiscount: computedGlobalDiscount,
   });
 
   const cashReceivedNum = Number(cashTendered) || 0;
@@ -214,6 +331,17 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
       return;
     }
 
+    // Validación Fiscal DGII para B01 (Crédito Fiscal exige RNC de 9 dígitos o Cédula de 11 dígitos)
+    if (isFiscal && ncfType === 'B01') {
+      const cleanDigits = customerRnc.replace(/\D/g, '');
+      if (cleanDigits.length !== 9 && cleanDigits.length !== 11) {
+        showToast(
+          'Para Crédito Fiscal (B01) debe ingresar un RNC (9 dígitos) o Cédula (11 dígitos) válido.'
+        );
+        return;
+      }
+    }
+
     try {
       const emittedDoc = await issueDocumentTransaction({
         brandId: activeBrand.id,
@@ -223,9 +351,24 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
         internalDocTitle: 'RECIBO_DE_PAGO',
         customerName: customerName.trim() || 'Consumidor Final',
         customerRncOrCedula: isFiscal ? customerRnc.trim() : undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        paymentMethod,
         items: cart,
         includeLegalTip: false,
         depositPercentage: 100,
+        globalDiscount: computedGlobalDiscount,
+      });
+
+      await logAuditAction({
+        brandId: activeBrand.id,
+        action: 'VENTA_POS',
+        details: `Comprobante ${emittedDoc.documentCode} • Total RD$ ${emittedDoc.totalAmount}${
+          emittedDoc.discountTotal > 0
+            ? ` (Desc: RD$ ${emittedDoc.discountTotal}${
+                appliedPromoCode ? ` [${appliedPromoCode}]` : ''
+              })`
+            : ''
+        }`,
       });
 
       // Descontar stock en tiempo real para productos físicos
@@ -258,6 +401,8 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
         createdAt: emittedDoc.createdAt,
         items: emittedDoc.items,
         subtotal: emittedDoc.subtotal,
+        discountTotal: emittedDoc.discountTotal,
+        promoCodeApplied: appliedPromoCode || undefined,
         itbisAmount: emittedDoc.itbisAmount,
         totalAmount: emittedDoc.totalAmount,
         amountPaid: emittedDoc.amountPaid,
@@ -276,12 +421,117 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
 
       setCart([]);
       setCashTendered('');
+      setExpandedCartItemId(null);
+      setPromoCodeInput('');
+      setAppliedPromoCode('');
+      setGlobalDiscountVal(0);
       showToast(`Venta completada: ${emittedDoc.documentCode}`);
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : 'Error al procesar el cobro.';
       showToast(msg);
     }
+  };
+
+  // Emitir Nota de Crédito B04 (Anular/Devolver venta y restaurar stock)
+  const handleIssueCreditNoteB04 = async (originalDoc: IssuedDocument) => {
+    try {
+      const emittedB04 = await issueDocumentTransaction({
+        brandId: activeBrand.id,
+        moduleUsed: 'RETAIL_MODULE',
+        isFiscal: originalDoc.isFiscal,
+        ncfType: originalDoc.isFiscal ? 'B04' : undefined,
+        modifiedNcf: originalDoc.isFiscal
+          ? originalDoc.ncfNumber || originalDoc.documentCode
+          : originalDoc.documentCode,
+        internalDocTitle: 'RECIBO_DE_PAGO',
+        customerName: originalDoc.customerName,
+        customerRncOrCedula: originalDoc.customerRncOrCedula,
+        customerPhone: originalDoc.customerPhone,
+        paymentMethod: originalDoc.paymentMethod || 'EFECTIVO',
+        items: originalDoc.items,
+        includeLegalTip: false,
+        depositPercentage: 100,
+      });
+
+      // Restaurar stock de los productos devueltos
+      for (const line of originalDoc.items) {
+        if (!line.code) continue;
+        const prod = brandProducts.find((p) => p.code === line.code);
+        if (prod && prod.id && !prod.isService && typeof prod.stock === 'number') {
+          await db.catalogItems.update(prod.id, {
+            stock: prod.stock + line.quantity,
+          });
+        }
+      }
+
+      const seqB04 = ncfSequences.find((s) => s.type === 'B04');
+
+      setPrintData({
+        isFiscal: emittedB04.isFiscal,
+        brand: activeBrand,
+        corporate,
+        ncfSequence: seqB04,
+        documentCode: emittedB04.documentCode,
+        modifiedNcf: emittedB04.modifiedNcf,
+        customTitle: originalDoc.isFiscal
+          ? 'NOTA DE CRÉDITO FISCAL (B04)'
+          : 'NOTA DE DEVOLUCIÓN INTERNA',
+        authorizationNo: emittedB04.authorizationNo,
+        expirationDate: emittedB04.expirationDate,
+        clientName: emittedB04.customerName,
+        clientRncOrCedula: emittedB04.customerRncOrCedula,
+        clientPhone: emittedB04.customerPhone,
+        createdAt: emittedB04.createdAt,
+        items: emittedB04.items,
+        subtotal: emittedB04.subtotal,
+        itbisAmount: emittedB04.itbisAmount,
+        totalAmount: emittedB04.totalAmount,
+        amountPaid: emittedB04.totalAmount,
+        balanceDue: 0,
+        notes: `Devolución / Anulación sobre comprobante ${
+          originalDoc.ncfNumber || originalDoc.documentCode
+        }. Stock restaurado.`,
+      });
+
+      showToast(
+        `Nota de Crédito ${emittedB04.documentCode} emitida y stock restaurado.`
+      );
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Error al emitir Nota de Crédito B04.';
+      showToast(msg);
+    }
+  };
+
+  const handleReprintSale = (doc: IssuedDocument) => {
+    const seq = doc.ncfType
+      ? ncfSequences.find((s) => s.type === doc.ncfType)
+      : undefined;
+
+    setPrintData({
+      isFiscal: doc.isFiscal,
+      brand: activeBrand,
+      corporate,
+      ncfSequence: seq,
+      documentCode: doc.documentCode,
+      modifiedNcf: doc.modifiedNcf,
+      authorizationNo: doc.authorizationNo,
+      expirationDate: doc.expirationDate,
+      clientName: doc.customerName,
+      clientRncOrCedula: doc.customerRncOrCedula,
+      clientPhone: doc.customerPhone,
+      createdAt: doc.createdAt,
+      items: doc.items,
+      subtotal: doc.subtotal,
+      itbisAmount: doc.itbisAmount,
+      legalTipAmount: doc.legalTipAmount,
+      totalAmount: doc.totalAmount,
+      amountPaid: doc.amountPaid,
+      balanceDue: doc.balanceDue,
+    });
   };
 
   return (
@@ -293,8 +543,8 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
         </div>
       )}
 
-      {/* COLUMNA IZQUIERDA (7 COLS): REJILLA DE PRODUCTOS Y BUSCADOR DE CÓDIGO DE BARRAS */}
-      <div className="lg:col-span-7 space-y-4">
+      {/* COLUMNA IZQUIERDA (7 COLS): REJILLA DE PRODUCTOS + HISTORIAL DEL TURNO */}
+      <div className="lg:col-span-7 space-y-5">
         <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs space-y-3">
           <div className="relative">
             <Barcode className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -396,9 +646,96 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
             );
           })}
         </div>
+
+        {/* HISTORIAL RÁPIDO DE VENTAS DEL DÍA / TURNO + NOTA DE CRÉDITO B04 */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <History className="w-4 h-4 text-teal-600" />
+              <span>Ventas Recientes del Turno ({recentSales.length})</span>
+            </h4>
+            <span className="text-[11px] text-slate-400">
+              Reimpresión y Devoluciones B04
+            </span>
+          </div>
+
+          {recentSales.length === 0 ? (
+            <p className="text-xs text-slate-400 py-3 text-center">
+              Aún no se han emitido ventas en este turno.
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-100 text-xs">
+              {recentSales.map((sale) => {
+                const isCreditNote = sale.ncfType === 'B04' || Boolean(sale.modifiedNcf);
+                return (
+                  <div
+                    key={sale.id}
+                    className="py-2.5 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={`font-mono font-bold px-2 py-0.5 rounded text-[11px] ${
+                          isCreditNote
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : sale.isFiscal
+                            ? 'bg-teal-50 text-teal-800 border border-teal-200'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {sale.documentCode}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">
+                          {sale.customerName}
+                        </p>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {new Date(sale.createdAt).toLocaleTimeString('es-DO', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          {sale.modifiedNcf ? ` • Ref: ${sale.modifiedNcf}` : ''}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-mono font-bold text-slate-900">
+                        RD${' '}
+                        {sale.totalAmount.toLocaleString('es-DO', {
+                          minimumFractionDigits: 2,
+                        })}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => handleReprintSale(sale)}
+                        className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100"
+                        title="Reimprimir / Enviar por WhatsApp"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
+
+                      {!isCreditNote && (
+                        <button
+                          type="button"
+                          onClick={() => handleIssueCreditNoteB04(sale)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold"
+                          title="Emitir Nota de Crédito B04 y restaurar stock"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>B04</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* COLUMNA DERECHA (5 COLS): CARRITO Y TERMINAL DE COBRO */}
+      {/* COLUMNA DERECHA (5 COLS): CARRITO EDITABLE Y TERMINAL DE COBRO */}
       <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs flex flex-col overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -407,19 +744,50 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
               Ticket de Venta ({cart.reduce((a, b) => a + b.quantity, 0)})
             </h3>
           </div>
-          {cart.length > 0 && (
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setCart([])}
-              className="text-xs text-rose-600 hover:text-rose-700 font-semibold"
+              onClick={() => {
+                setAllowPriceOverride((prev) => !prev);
+                showToast(
+                  !allowPriceOverride
+                    ? 'Modo Supervisor: Edición de precio/descuento habilitada.'
+                    : 'Precios bloqueados a tarifa de catálogo.'
+                );
+              }}
+              title="Autorizar cambio de precio / descuento manual"
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all ${
+                allowPriceOverride
+                  ? 'bg-amber-50 border-amber-300 text-amber-800'
+                  : 'bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-800'
+              }`}
             >
-              Vaciar
+              {allowPriceOverride ? (
+                <>
+                  <Unlock className="w-3 h-3 text-amber-600" />
+                  <span>Precio Libre</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3 h-3" />
+                  <span>Precio Fijo</span>
+                </>
+              )}
             </button>
-          )}
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setCart([])}
+                className="text-xs text-rose-600 hover:text-rose-700 font-semibold"
+              >
+                Vaciar
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* LISTA DE ÍTEMS EN EL CARRITO */}
-        <div className="p-4 space-y-2.5 max-h-64 overflow-y-auto divide-y divide-slate-100">
+        {/* LISTA DE ÍTEMS EN EL CARRITO CON EDICIÓN DE PRECIO, DESCUENTO Y NOTA */}
+        <div className="p-4 space-y-3 max-h-80 overflow-y-auto divide-y divide-slate-100">
           {cart.length === 0 ? (
             <div className="py-10 text-center space-y-2">
               <Package className="w-7 h-7 text-slate-300 mx-auto" />
@@ -428,73 +796,180 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
               </p>
             </div>
           ) : (
-            cart.map((item) => (
-              <div
-                key={item.id}
-                className="pt-2.5 first:pt-0 flex items-center justify-between gap-2 text-xs"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-900 truncate">
-                    {item.description}
-                  </p>
-                  <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
-                    <span>
+            cart.map((item) => {
+              const isExpanded = expandedCartItemId === item.id;
+              const lineNet = Math.max(
+                0,
+                roundCurrency(
+                  item.quantity * item.unitPrice - (item.discount || 0)
+                )
+              );
+
+              return (
+                <div key={item.id} className="pt-2.5 first:pt-0 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedCartItemId(isExpanded ? null : item.id)
+                      }
+                      className="min-w-0 flex-1 text-left"
+                      title="Haz clic para ajustar precio, descuento o nota"
+                    >
+                      <p className="font-semibold text-slate-900 truncate hover:text-teal-700">
+                        {item.description}
+                      </p>
+                      <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
+                        <span>
+                          RD${' '}
+                          {item.unitPrice.toLocaleString('es-DO', {
+                            minimumFractionDigits: 2,
+                          })}{' '}
+                          / {item.unit}
+                        </span>
+                        {item.discount && item.discount > 0 ? (
+                          <span className="text-rose-600 font-bold">
+                            (-RD$ {item.discount})
+                          </span>
+                        ) : null}
+                      </div>
+                    </button>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQty(item.id, -1)}
+                        className="p-1 rounded-lg border border-slate-200 hover:bg-slate-100"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="w-7 text-center font-mono font-bold">
+                        {item.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQty(item.id, 1)}
+                        className="p-1 rounded-lg border border-slate-200 hover:bg-slate-100"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="w-24 text-right font-mono font-bold text-slate-900 shrink-0">
                       RD${' '}
-                      {item.unitPrice.toLocaleString('es-DO', {
+                      {lineNet.toLocaleString('es-DO', {
                         minimumFractionDigits: 2,
-                      })}{' '}
-                      / {item.unit}
-                    </span>
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItem(item.id)}
+                      className="p-1 text-slate-400 hover:text-rose-600"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateQty(item.id, -1)}
-                    className="p-1 rounded-lg border border-slate-200 hover:bg-slate-100"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <span className="w-7 text-center font-mono font-bold">
-                    {item.quantity}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateQty(item.id, 1)}
-                    className="p-1 rounded-lg border border-slate-200 hover:bg-slate-100"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
+                  {/* NOTA / SERIAL Y EDICIÓN SUPERVISADA DE PRECIO / DESCUENTO */}
+                  {(isExpanded || allowPriceOverride || Boolean(item.notes)) && (
+                    <div className="grid grid-cols-12 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200/70">
+                      <div className="col-span-4">
+                        <label className="text-[10px] text-slate-400 block">
+                          Precio Unit.
+                        </label>
+                        {allowPriceOverride ? (
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.unitPrice}
+                            onChange={(e) =>
+                              handleUpdateItemField(
+                                item.id,
+                                'unitPrice',
+                                Number(e.target.value)
+                              )
+                            }
+                            className="w-full rounded-lg border border-amber-300 bg-white px-2 py-1 font-mono text-[11px]"
+                          />
+                        ) : (
+                          <div className="w-full rounded-lg border border-slate-200/80 bg-slate-100 px-2 py-1 font-mono text-[11px] font-bold text-slate-600 select-none">
+                            RD${' '}
+                            {item.unitPrice.toLocaleString('es-DO', {
+                              minimumFractionDigits: 2,
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-4">
+                        <label className="text-[10px] text-slate-400 block">
+                          Desc. (RD$)
+                        </label>
+                        {allowPriceOverride ? (
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.discount || 0}
+                            onChange={(e) =>
+                              handleUpdateItemField(
+                                item.id,
+                                'discount',
+                                Number(e.target.value)
+                              )
+                            }
+                            className="w-full rounded-lg border border-amber-300 bg-white px-2 py-1 font-mono text-[11px]"
+                          />
+                        ) : (
+                          <div className="w-full rounded-lg border border-slate-200/80 bg-slate-100 px-2 py-1 font-mono text-[11px] text-slate-500 select-none">
+                            RD$ {(item.discount || 0).toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-4">
+                        <label className="text-[10px] text-slate-400 block">
+                          Nota / Serial
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Opcional"
+                          value={item.notes || ''}
+                          onChange={(e) =>
+                            handleUpdateItemField(
+                              item.id,
+                              'notes',
+                              e.target.value
+                            )
+                          }
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px]"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-
-                <div className="w-24 text-right font-mono font-bold text-slate-900 shrink-0">
-                  RD${' '}
-                  {(item.quantity * item.unitPrice).toLocaleString('es-DO', {
-                    minimumFractionDigits: 2,
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleRemoveItem(item.id)}
-                  className="p-1 text-slate-400 hover:text-rose-600"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
         {/* CONFIGURACIÓN DE CLIENTE, MODO FISCAL Y MÉTODO DE COBRO */}
         <div className="p-5 bg-slate-50/70 border-t border-slate-200 space-y-4 text-xs">
-          {/* SELECTOR DE CLIENTE */}
+          {/* SELECTOR DE CLIENTE + BOTÓN NUEVO CLIENTE RÁPIDO */}
           <div className="space-y-2">
-            <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-              <User className="w-3.5 h-3.5" />
-              <span>Cliente</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-semibold text-slate-700">
+                <User className="w-3.5 h-3.5" />
+                <span>Cliente</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewClientModalOpen(true)}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-900 text-white text-[11px] font-semibold hover:bg-slate-800"
+              >
+                <UserPlus className="w-3 h-3" />
+                <span>+ Nuevo</span>
+              </button>
             </div>
+
             <select
               value={selectedClientId}
               onChange={(e) => handleSelectClient(e.target.value)}
@@ -519,7 +994,7 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
                 />
                 <input
                   type="text"
-                  placeholder="RNC o Cédula"
+                  placeholder="RNC (9) o Cédula (11)"
                   value={customerRnc}
                   onChange={(e) => setCustomerRnc(e.target.value)}
                   className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 font-mono"
@@ -570,8 +1045,8 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
             )}
           </div>
 
-          {/* MÉTODO DE COBRO */}
-          <div className="space-y-1.5">
+          {/* MÉTODO DE COBRO Y BOTONES DE EFECTIVO RÁPIDO */}
+          <div className="space-y-2">
             <div className="flex items-center gap-1.5 font-semibold text-slate-700">
               <CreditCard className="w-3.5 h-3.5" />
               <span>Forma de Pago</span>
@@ -598,39 +1073,133 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
             </div>
 
             {paymentMethod === 'EFECTIVO' && (
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <div>
-                  <label className="text-[10px] text-slate-500 block">
-                    Efectivo Recibido (RD$)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    placeholder="0.00"
-                    value={cashTendered}
-                    onChange={(e) => setCashTendered(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 font-mono"
-                  />
+              <div className="space-y-2 pt-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCashTendered(String(totals.totalAmount))}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 font-mono text-[11px] font-semibold text-slate-800"
+                  >
+                    Exacto
+                  </button>
+                  {[500, 1000, 2000, 5000].map((bill) => (
+                    <button
+                      key={bill}
+                      type="button"
+                      onClick={() => setCashTendered(String(bill))}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 font-mono text-[11px] font-semibold text-slate-800"
+                    >
+                      RD$ {bill.toLocaleString('es-DO')}
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <label className="text-[10px] text-slate-500 block">
-                    Devuelta al Cliente
-                  </label>
-                  <div className="rounded-xl border border-slate-200 bg-slate-100 px-2.5 py-1.5 font-mono font-bold text-teal-700">
-                    RD${' '}
-                    {changeDue.toLocaleString('es-DO', {
-                      minimumFractionDigits: 2,
-                    })}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-500 block">
+                      Efectivo Recibido (RD$)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="0.00"
+                      value={cashTendered}
+                      onChange={(e) => setCashTendered(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 block">
+                      Devuelta al Cliente
+                    </label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-100 px-2.5 py-1.5 font-mono font-bold text-teal-700">
+                      RD${' '}
+                      {changeDue.toLocaleString('es-DO', {
+                        minimumFractionDigits: 2,
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
             )}
           </div>
 
+          {/* DESCUENTO Y CÓDIGO PROMOCIONAL */}
+          <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-slate-700 flex items-center gap-1 text-[11px]">
+                <Tag className="w-3.5 h-3.5 text-teal-600" />
+                <span>Código / Descuento</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  placeholder="Ej. VIP10"
+                  value={promoCodeInput}
+                  onChange={(e) =>
+                    setPromoCodeInput(e.target.value.toUpperCase())
+                  }
+                  className="w-24 rounded-lg border border-slate-200 px-2 py-1 font-mono text-[11px] uppercase"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyPromoCode}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold"
+                >
+                  Aplicar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={globalDiscountType}
+                  onChange={(e) =>
+                    setGlobalDiscountType(
+                      e.target.value as 'PERCENT' | 'FIXED'
+                    )
+                  }
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold"
+                >
+                  <option value="PERCENT">% Desc.</option>
+                  <option value="FIXED">RD$ Fijo</option>
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  value={globalDiscountVal}
+                  onChange={(e) => {
+                    setGlobalDiscountVal(Number(e.target.value));
+                    setAppliedPromoCode('');
+                  }}
+                  className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-[11px]"
+                />
+              </div>
+              {appliedPromoCode && (
+                <span className="px-2 py-0.5 rounded bg-teal-50 text-teal-800 font-mono text-[10px] font-bold">
+                  Cupón: {appliedPromoCode}
+                </span>
+              )}
+            </div>
+          </div>
+
           {/* RESUMEN DE TOTALES */}
           <div className="pt-3 border-t border-slate-200 space-y-1.5 font-mono">
+            {totals.discountTotal > 0 && (
+              <div className="flex justify-between text-rose-600">
+                <span>Descuentos:</span>
+                <span>
+                  - RD${' '}
+                  {totals.discountTotal.toLocaleString('es-DO', {
+                    minimumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+            )}
+
             <div className="flex justify-between text-slate-600">
-              <span>Subtotal:</span>
+              <span>Subtotal Neto:</span>
               <span>
                 RD${' '}
                 {totals.netSubtotal.toLocaleString('es-DO', {
@@ -672,6 +1241,97 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* MODAL CREACIÓN RÁPIDA DE CLIENTE */}
+      {newClientModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">
+                Nuevo Cliente Rápido
+              </h3>
+              <button
+                type="button"
+                onClick={() => setNewClientModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form
+              onSubmit={handleQuickCreateClient}
+              className="p-6 space-y-4 text-xs"
+            >
+              <div>
+                <label className="font-medium text-slate-600 block mb-1">
+                  Nombre o Razón Social *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newClientName}
+                  onChange={(e) => setNewClientName(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-medium text-slate-600 block mb-1">
+                    RNC (9) o Cédula (11)
+                  </label>
+                  <input
+                    type="text"
+                    value={newClientRnc}
+                    onChange={(e) => setNewClientRnc(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="font-medium text-slate-600 block mb-1">
+                    Teléfono (WhatsApp)
+                  </label>
+                  <input
+                    type="text"
+                    value={newClientPhone}
+                    onChange={(e) => setNewClientPhone(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="font-medium text-slate-600 block mb-1">
+                  Comprobante Preferido
+                </label>
+                <select
+                  value={newClientPrefNcf}
+                  onChange={(e) =>
+                    setNewClientPrefNcf(e.target.value as 'B01' | 'B02')
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white font-mono"
+                >
+                  <option value="B01">B01 • Crédito Fiscal</option>
+                  <option value="B02">B02 • Consumo</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setNewClientModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-slate-900 text-white font-semibold"
+                >
+                  Guardar y Seleccionar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE IMPRESIÓN Y WHATSAPP */}
       <InvoicePrintModal

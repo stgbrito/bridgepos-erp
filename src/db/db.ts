@@ -32,6 +32,41 @@ export type ServiceOrderStatus =
 
 export type PaymentMethod = 'EFECTIVO' | 'TRANSFERENCIA' | 'TARJETA';
 
+export type UserRole = 'ADMIN' | 'CAJERO' | 'CAMARERO' | 'TECNICO';
+
+export interface StaffUser {
+  id: string;
+  name: string;
+  role: UserRole;
+  pin: string;
+  active: boolean;
+}
+
+export interface AuditLogEntry {
+  id?: number;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userRole: UserRole;
+  brandId: BrandId;
+  action: string;
+  details: string;
+}
+
+export interface DiscountPromoCode {
+  code: string; // Primary key ej. 'VIP10'
+  description: string;
+  type: 'PERCENT' | 'FIXED';
+  value: number;
+  active: boolean;
+}
+
+export interface InvoiceItemExtra {
+  id: string;
+  name: string;
+  price: number;
+}
+
 export interface CorporateConfig {
   id: string; // 'corporate-main'
   legalName: string; // Bridge to Solutions, S.R.L.
@@ -90,6 +125,13 @@ export interface InvoiceItem {
   unitPrice: number;
   taxExempt?: boolean;
   discount?: number;
+  notes?: string;
+  station?: 'COCINA' | 'BAR';
+  sentQuantity?: number;
+  course?: 'ENTRADA' | 'FUERTE' | 'POSTRE' | 'BEBIDA';
+  isCourtesy?: boolean;
+  extras?: InvoiceItemExtra[];
+  costType?: 'MANO_DE_OBRA' | 'MATERIALES' | 'GENERAL';
 }
 
 export interface IssuedDocument {
@@ -101,12 +143,14 @@ export interface IssuedDocument {
   isFiscal: boolean; // CRÍTICO: Modo Fiscal Dual
   ncfType?: NCFType;
   ncfNumber?: string;
+  modifiedNcf?: string; // Para Notas de Crédito B04 en el 607
   authorizationNo?: string;
   expirationDate?: string;
   internalDocTitle?: InternalDocType;
   customerName: string;
   customerRncOrCedula?: string;
   customerPhone?: string;
+  paymentMethod?: PaymentMethod;
   items: InvoiceItem[];
   subtotal: number;
   discountTotal: number;
@@ -158,6 +202,7 @@ export interface CatalogItem {
   isService: boolean;
   stock?: number;
   taxExempt?: boolean;
+  station?: 'COCINA' | 'BAR';
   active: boolean;
 }
 
@@ -209,6 +254,9 @@ export interface ServiceOrder {
   expirationDate?: string;
   // Importes
   subtotal: number;
+  discountTotal?: number;
+  promoCodeApplied?: string;
+  separateLaborAndMaterials?: boolean;
   itbisAmount: number;
   totalAmount: number;
   amountPaid: number;
@@ -226,6 +274,8 @@ export type RestaurantZone = 'SALON' | 'TERRAZA' | 'VIP' | 'EVENTOS';
 
 export type TableStatus = 'LIBRE' | 'OCUPADA' | 'PRE_CUENTA';
 
+export type RestaurantOrderType = 'SALON' | 'PARA_LLEVAR' | 'DELIVERY';
+
 export interface RestaurantTableAccount {
   id: string; // ej. 'mesa-1'
   name: string; // ej. 'Mesa 01'
@@ -237,6 +287,7 @@ export interface RestaurantTableAccount {
   clientName: string;
   clientRncOrCedula: string;
   includeLegalTip: boolean;
+  orderType?: RestaurantOrderType;
   splitWays: number;
   items: InvoiceItem[];
   openedAt?: string;
@@ -626,6 +677,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     price: 695,
     isService: false,
     stock: 50,
+    station: 'COCINA',
     active: true,
   },
   {
@@ -637,6 +689,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     price: 2450,
     isService: false,
     stock: 25,
+    station: 'COCINA',
     active: true,
   },
   {
@@ -647,6 +700,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     unit: 'PROY',
     price: 18500,
     isService: true,
+    station: 'COCINA',
     active: true,
   },
   {
@@ -658,6 +712,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     price: 450,
     isService: false,
     stock: 40,
+    station: 'BAR',
     active: true,
   },
   {
@@ -669,6 +724,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     price: 580,
     isService: false,
     stock: 35,
+    station: 'COCINA',
     active: true,
   },
   {
@@ -680,6 +736,7 @@ export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
     price: 390,
     isService: false,
     stock: 20,
+    station: 'COCINA',
     active: true,
   },
   // EQUIPOS RETAIL ADICIONALES
@@ -749,6 +806,9 @@ export const INITIAL_RESTAURANT_TABLES: RestaurantTableAccount[] = [
         code: 'MF-PAR-02',
         description: 'Bandeja Parrillada Mixta Familiar (4 Personas)',
         quantity: 1,
+        sentQuantity: 1,
+        station: 'COCINA',
+        course: 'FUERTE',
         unit: 'UND',
         unitPrice: 2450,
       },
@@ -757,6 +817,9 @@ export const INITIAL_RESTAURANT_TABLES: RestaurantTableAccount[] = [
         code: 'MF-BEB-04',
         description: 'Jarra Limonada Frappé con Hierbabuena (1.5 Lts)',
         quantity: 2,
+        sentQuantity: 2,
+        station: 'BAR',
+        course: 'BEBIDA',
         unit: 'UND',
         unitPrice: 450,
       },
@@ -1030,6 +1093,75 @@ export const INITIAL_SERVICE_ORDERS: ServiceOrder[] = [
   },
 ];
 
+export const INITIAL_STAFF_USERS: StaffUser[] = [
+  {
+    id: 'user-admin',
+    name: 'Santiago Brito',
+    role: 'ADMIN',
+    pin: '1234',
+    active: true,
+  },
+  {
+    id: 'user-cajero',
+    name: 'Caja Principal',
+    role: 'CAJERO',
+    pin: '0000',
+    active: true,
+  },
+  {
+    id: 'user-camarero-1',
+    name: 'Carlos R.',
+    role: 'CAMARERO',
+    pin: '1111',
+    active: true,
+  },
+  {
+    id: 'user-camarero-2',
+    name: 'Laura M.',
+    role: 'CAMARERO',
+    pin: '2222',
+    active: true,
+  },
+  {
+    id: 'user-tecnico',
+    name: 'Alam Brito',
+    role: 'TECNICO',
+    pin: '3333',
+    active: true,
+  },
+];
+
+export const INITIAL_PROMO_CODES: DiscountPromoCode[] = [
+  {
+    code: 'VIP10',
+    description: 'Descuento Cliente VIP (10%)',
+    type: 'PERCENT',
+    value: 10,
+    active: true,
+  },
+  {
+    code: 'DESC15',
+    description: 'Promoción Especial Corporativa (15%)',
+    type: 'PERCENT',
+    value: 15,
+    active: true,
+  },
+  {
+    code: 'FAMILIA20',
+    description: 'Descuento Amigos y Familia (20%)',
+    type: 'PERCENT',
+    value: 20,
+    active: true,
+  },
+  {
+    code: 'BONO500',
+    description: 'Bono de Descuento Directo (RD$ 500)',
+    type: 'FIXED',
+    value: 500,
+    active: true,
+  },
+];
+
 // ==========================================
 // 5. CLASE DE BASE DE DATOS DEXIE
 // ==========================================
@@ -1043,6 +1175,9 @@ export class BridgePOSDatabase extends Dexie {
   catalogItems!: Table<CatalogItem, number>;
   serviceOrders!: Table<ServiceOrder, number>;
   restaurantTables!: Table<RestaurantTableAccount, string>;
+  staffUsers!: Table<StaffUser, string>;
+  auditLogs!: Table<AuditLogEntry, number>;
+  promoCodes!: Table<DiscountPromoCode, string>;
 
   constructor() {
     super('BridgePOS_ERP_DB');
@@ -1080,6 +1215,22 @@ export class BridgePOSDatabase extends Dexie {
       restaurantTables: 'id, zone, status',
     });
 
+    this.version(4).stores({
+      corporateConfig: 'id, rnc',
+      brands: 'id, name',
+      ncfSequences: 'type, authorizationNo, direction, isActive',
+      documents:
+        '++id, documentCode, brandId, isFiscal, ncfType, goesTo607, goesTo606, createdAt, syncStatus',
+      clients: '++id, name, rncOrCedula, phone, preferredNcfType',
+      catalogItems: '++id, brandId, code, name, category, isService, active',
+      serviceOrders:
+        '++id, orderCode, brandId, status, clientId, clientName, isFiscal, createdAt',
+      restaurantTables: 'id, zone, status',
+      staffUsers: 'id, role, active',
+      auditLogs: '++id, timestamp, userId, userRole, brandId, action',
+      promoCodes: 'code, active',
+    });
+
     this.on('populate', async () => {
       await this.corporateConfig.put(INITIAL_CORPORATE_CONFIG);
       await this.brands.bulkPut(INITIAL_BRANDS);
@@ -1088,11 +1239,43 @@ export class BridgePOSDatabase extends Dexie {
       await this.catalogItems.bulkPut(INITIAL_CATALOG_ITEMS);
       await this.serviceOrders.bulkPut(INITIAL_SERVICE_ORDERS);
       await this.restaurantTables.bulkPut(INITIAL_RESTAURANT_TABLES);
+      await this.staffUsers.bulkPut(INITIAL_STAFF_USERS);
+      await this.promoCodes.bulkPut(INITIAL_PROMO_CODES);
     });
   }
 }
 
 export const db = new BridgePOSDatabase();
+
+export async function logAuditAction(params: {
+  user?: StaffUser;
+  brandId: BrandId;
+  action: string;
+  details: string;
+}): Promise<void> {
+  try {
+    const activeId =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('bridgepos_active_user_id') || 'user-admin'
+        : 'user-admin';
+    const userObj =
+      params.user ||
+      (await db.staffUsers.get(activeId)) ||
+      INITIAL_STAFF_USERS[0];
+
+    await db.auditLogs.add({
+      timestamp: new Date().toISOString(),
+      userId: userObj.id,
+      userName: userObj.name,
+      userRole: userObj.role,
+      brandId: params.brandId,
+      action: params.action,
+      details: params.details,
+    });
+  } catch {
+    // Silenciar errores no críticos de auditoría
+  }
+}
 
 /**
  * Garantiza que el Seed Data de Fases 1 y 2 exista
@@ -1171,6 +1354,16 @@ export async function ensureDatabaseSeeded(): Promise<void> {
   const tablesCount = await db.restaurantTables.count();
   if (tablesCount === 0) {
     await db.restaurantTables.bulkPut(INITIAL_RESTAURANT_TABLES);
+  }
+
+  const usersCount = await db.staffUsers.count();
+  if (usersCount === 0) {
+    await db.staffUsers.bulkPut(INITIAL_STAFF_USERS);
+  }
+
+  const promosCount = await db.promoCodes.count();
+  if (promosCount === 0) {
+    await db.promoCodes.bulkPut(INITIAL_PROMO_CODES);
   }
 }
 

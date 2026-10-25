@@ -10,6 +10,7 @@ import {
   type ModuleType,
   type NCFSequence,
   type NCFType,
+  type PaymentMethod,
 } from '../db/db';
 
 // ==========================================
@@ -30,6 +31,8 @@ export interface FiscalCalculationOptions {
   includeLegalTip?: boolean; // 10% Propina Legal RD (Restaurante)
   pricesIncludeItbis?: boolean; // Si el precio base ya tiene el 18% incluido
   depositPercentage?: number; // Ej. 50% de abono inicial en SERVICE_MODULE
+  globalDiscount?: number; // Descuento global o cupón promocional en RD$
+  forceZeroTaxes?: boolean; // Modo Cobrar Sin Impuestos (0% ITBIS y 0% Propina)
 }
 
 export interface FiscalCalculationResult {
@@ -184,51 +187,79 @@ export function calculateInvoiceTotals(
     includeLegalTip = false,
     pricesIncludeItbis = false,
     depositPercentage = 100,
+    globalDiscount = 0,
+    forceZeroTaxes = false,
   } = options;
 
   let grossSubtotal = 0;
-  let discountTotal = 0;
-  let taxableBase = 0;
-  let exemptAmount = 0;
-  let itbisAmount = 0;
+  let lineDiscountSum = 0;
+  let taxableLinesNet = 0;
+  let exemptLinesNet = 0;
 
   for (const item of items) {
-    const lineGross = roundCurrency(item.quantity * item.unitPrice);
+    if (item.isCourtesy) {
+      continue;
+    }
+    const extrasUnitSum = (item.extras || []).reduce(
+      (acc, ex) => acc + (Number(ex.price) || 0),
+      0
+    );
+    const effectiveUnitPrice = roundCurrency(item.unitPrice + extrasUnitSum);
+    const lineGross = roundCurrency(item.quantity * effectiveUnitPrice);
     const lineDiscount = roundCurrency(item.discount || 0);
     const lineNet = Math.max(0, roundCurrency(lineGross - lineDiscount));
 
     grossSubtotal = roundCurrency(grossSubtotal + lineGross);
-    discountTotal = roundCurrency(discountTotal + lineDiscount);
+    lineDiscountSum = roundCurrency(lineDiscountSum + lineDiscount);
 
-    if (!isFiscal) {
-      // MODO INTERNO (isFiscal: false): No se desglosa ITBIS en el documento
-      exemptAmount = roundCurrency(exemptAmount + lineNet);
+    if (!isFiscal || forceZeroTaxes || item.taxExempt) {
+      exemptLinesNet = roundCurrency(exemptLinesNet + lineNet);
     } else {
-      // MODO FISCAL (isFiscal: true): Desglose obligatorio del 18% ITBIS
-      if (item.taxExempt) {
-        exemptAmount = roundCurrency(exemptAmount + lineNet);
-      } else if (pricesIncludeItbis) {
-        const base = roundCurrency(lineNet / (1 + DGII_ITBIS_RATE));
-        const tax = roundCurrency(lineNet - base);
-        taxableBase = roundCurrency(taxableBase + base);
-        itbisAmount = roundCurrency(itbisAmount + tax);
-      } else {
-        const base = lineNet;
-        const tax = roundCurrency(base * DGII_ITBIS_RATE);
-        taxableBase = roundCurrency(taxableBase + base);
-        itbisAmount = roundCurrency(itbisAmount + tax);
-      }
+      taxableLinesNet = roundCurrency(taxableLinesNet + lineNet);
     }
   }
 
-  const netSubtotal = isFiscal
-    ? roundCurrency(taxableBase + exemptAmount)
-    : roundCurrency(grossSubtotal - discountTotal);
+  const extraGlobalDiscount = Math.max(0, roundCurrency(globalDiscount));
+  const discountTotal = Math.min(
+    grossSubtotal,
+    roundCurrency(lineDiscountSum + extraGlobalDiscount)
+  );
 
-  // Propina Legal RD (10%) se calcula siempre sobre el subtotal neto antes de ITBIS
-  const legalTipAmount = includeLegalTip
-    ? roundCurrency(netSubtotal * DGII_LEGAL_TIP_RATE)
-    : 0;
+  // Aplicar descuento global proporcionalmente sobre la base gravada y exenta
+  const rawNetBeforeGlobal = roundCurrency(taxableLinesNet + exemptLinesNet);
+  let taxableBase = 0;
+  let exemptAmount = 0;
+  let itbisAmount = 0;
+
+  if (rawNetBeforeGlobal > 0) {
+    const netAfterGlobal = Math.max(
+      0,
+      roundCurrency(rawNetBeforeGlobal - extraGlobalDiscount)
+    );
+    const ratio = netAfterGlobal / rawNetBeforeGlobal;
+    const discountedTaxable = roundCurrency(taxableLinesNet * ratio);
+    exemptAmount = roundCurrency(netAfterGlobal - discountedTaxable);
+
+    if (!isFiscal || forceZeroTaxes) {
+      taxableBase = 0;
+      itbisAmount = 0;
+      exemptAmount = netAfterGlobal;
+    } else if (pricesIncludeItbis) {
+      taxableBase = roundCurrency(discountedTaxable / (1 + DGII_ITBIS_RATE));
+      itbisAmount = roundCurrency(discountedTaxable - taxableBase);
+    } else {
+      taxableBase = discountedTaxable;
+      itbisAmount = roundCurrency(taxableBase * DGII_ITBIS_RATE);
+    }
+  }
+
+  const netSubtotal = roundCurrency(taxableBase + exemptAmount);
+
+  // Propina Legal RD (10%) se calcula sobre el subtotal neto antes de ITBIS
+  const legalTipAmount =
+    includeLegalTip && !forceZeroTaxes
+      ? roundCurrency(netSubtotal * DGII_LEGAL_TIP_RATE)
+      : 0;
 
   const totalAmount = roundCurrency(netSubtotal + itbisAmount + legalTipAmount);
 
@@ -243,8 +274,8 @@ export function calculateInvoiceTotals(
     netSubtotal,
     taxableBase,
     exemptAmount,
-    itbisAmount: isFiscal ? itbisAmount : 0,
-    showItbisBreakdown: isFiscal,
+    itbisAmount: isFiscal && !forceZeroTaxes ? itbisAmount : 0,
+    showItbisBreakdown: isFiscal && !forceZeroTaxes,
     legalTipAmount,
     totalAmount,
     depositPercentage: clampedDeposit,
@@ -568,12 +599,17 @@ export async function issueDocumentTransaction(params: {
   moduleUsed: ModuleType;
   isFiscal: boolean;
   ncfType?: NCFType;
+  modifiedNcf?: string;
   internalDocTitle?: InternalDocType;
   customerName: string;
   customerRncOrCedula?: string;
+  customerPhone?: string;
+  paymentMethod?: PaymentMethod;
   items: InvoiceItem[];
   includeLegalTip?: boolean;
   depositPercentage?: number;
+  globalDiscount?: number;
+  forceZeroTaxes?: boolean;
 }): Promise<IssuedDocument> {
   return await db.transaction(
     'rw',
@@ -588,6 +624,8 @@ export async function issueDocumentTransaction(params: {
         isFiscal: params.isFiscal,
         includeLegalTip: params.includeLegalTip,
         depositPercentage: params.depositPercentage ?? 100,
+        globalDiscount: params.globalDiscount ?? 0,
+        forceZeroTaxes: params.forceZeroTaxes ?? false,
       });
 
       let documentCode = '';
@@ -621,6 +659,7 @@ export async function issueDocumentTransaction(params: {
         isFiscal: params.isFiscal,
         ncfType: ncfTypeUsed,
         ncfNumber: params.isFiscal ? documentCode : undefined,
+        modifiedNcf: params.modifiedNcf,
         authorizationNo,
         expirationDate,
         internalDocTitle: !params.isFiscal
@@ -628,6 +667,8 @@ export async function issueDocumentTransaction(params: {
           : undefined,
         customerName: params.customerName || 'Consumidor Final',
         customerRncOrCedula: params.customerRncOrCedula,
+        customerPhone: params.customerPhone,
+        paymentMethod: params.paymentMethod,
         items: params.items,
         subtotal: totals.netSubtotal,
         discountTotal: totals.discountTotal,
