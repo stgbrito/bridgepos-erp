@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Barcode,
+  Calculator,
   Check,
   CreditCard,
   History,
@@ -23,6 +24,7 @@ import {
 import {
   db,
   INITIAL_PROMO_CODES,
+  INITIAL_STAFF_USERS,
   logAuditAction,
   type BrandProfile,
   type CatalogItem,
@@ -101,6 +103,184 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
   const [printData, setPrintData] = useState<PrintableDocumentData | null>(
     null
   );
+
+  // Drawer Móvil del Carrito y Modal de Corte de Caja (X / Z)
+  const [mobileCartDrawerOpen, setMobileCartDrawerOpen] =
+    useState<boolean>(false);
+  const [cashShiftModalOpen, setCashShiftModalOpen] = useState<boolean>(false);
+  const [shiftInitialCash, setShiftInitialCash] = useState<string>('2000');
+  const [shiftCountedCash, setShiftCountedCash] = useState<string>('');
+  const [shiftNotes, setShiftNotes] = useState<string>('');
+
+  const staffUsers =
+    useLiveQuery(() => db.staffUsers.toArray(), []) ?? INITIAL_STAFF_USERS;
+
+  // Todas las ventas emitidas hoy para esta marca (para Cuadre de Caja X / Z)
+  const todayBrandDocuments =
+    useLiveQuery(
+      () => db.documents.where('brandId').equals(activeBrand.id).toArray(),
+      [activeBrand.id]
+    ) ?? [];
+
+  const shiftSummary = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const todayDocs = todayBrandDocuments.filter(
+      (d) => new Date(d.createdAt).getTime() >= startOfToday.getTime()
+    );
+
+    let totalCash = 0;
+    let totalCard = 0;
+    let totalTransfer = 0;
+    let totalCreditNotes = 0;
+    let txCount = 0;
+
+    for (const d of todayDocs) {
+      if (d.goesTo606) continue;
+      const isB04 = d.ncfType === 'B04' || Boolean(d.modifiedNcf);
+      const amt = d.amountPaid + (d.voluntaryTipAmount || 0);
+      if (isB04) {
+        totalCreditNotes = roundCurrency(totalCreditNotes + amt);
+        if (d.paymentMethod === 'EFECTIVO') {
+          totalCash = roundCurrency(totalCash - amt);
+        } else if (d.paymentMethod === 'TARJETA') {
+          totalCard = roundCurrency(totalCard - amt);
+        } else {
+          totalTransfer = roundCurrency(totalTransfer - amt);
+        }
+      } else {
+        txCount += 1;
+        if (d.paymentMethod === 'TARJETA') {
+          totalCard = roundCurrency(totalCard + amt);
+        } else if (d.paymentMethod === 'TRANSFERENCIA') {
+          totalTransfer = roundCurrency(totalTransfer + amt);
+        } else {
+          totalCash = roundCurrency(totalCash + amt);
+        }
+      }
+    }
+
+    const totalSales = roundCurrency(totalCash + totalCard + totalTransfer);
+    const initialNum = Math.max(0, Number(shiftInitialCash) || 0);
+    const expectedDrawerCash = roundCurrency(initialNum + totalCash);
+    const countedNum =
+      shiftCountedCash.trim() === ''
+        ? expectedDrawerCash
+        : Math.max(0, Number(shiftCountedCash) || 0);
+    const diff = roundCurrency(countedNum - expectedDrawerCash);
+
+    return {
+      txCount,
+      totalCash,
+      totalCard,
+      totalTransfer,
+      totalCreditNotes,
+      totalSales,
+      initialNum,
+      expectedDrawerCash,
+      countedNum,
+      diff,
+    };
+  }, [todayBrandDocuments, shiftInitialCash, shiftCountedCash]);
+
+  const handleCloseShiftAndPrintZ = async (closeShiftType: 'X' | 'Z') => {
+    const activeId =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('bridgepos_active_user_id') || 'user-admin'
+        : 'user-admin';
+    const cashier =
+      staffUsers.find((u) => u.id === activeId) || INITIAL_STAFF_USERS[0];
+    const nowIso = new Date().toISOString();
+
+    const shiftId = await db.cashShifts.add({
+      openedAt: new Date(new Date().setHours(8, 0, 0, 0)).toISOString(),
+      closedAt: nowIso,
+      cashierId: cashier.id,
+      cashierName: cashier.name,
+      brandId: activeBrand.id,
+      initialCash: shiftSummary.initialNum,
+      totalCash: shiftSummary.totalCash,
+      totalCard: shiftSummary.totalCard,
+      totalTransfer: shiftSummary.totalTransfer,
+      totalSales: shiftSummary.totalSales,
+      countedCash: shiftSummary.countedNum,
+      difference: shiftSummary.diff,
+      status: closeShiftType === 'Z' ? 'CLOSED' : 'OPEN',
+      notes: shiftNotes.trim() || undefined,
+    });
+
+    await logAuditAction({
+      user: cashier,
+      brandId: activeBrand.id,
+      action: closeShiftType === 'Z' ? 'CIERRE_CAJA_Z' : 'CORTE_PARCIAL_X',
+      details: `Corte ${closeShiftType} #${shiftId} • Ventas: RD$ ${shiftSummary.totalSales.toLocaleString('es-DO')} • Diferencia Efectivo: RD$ ${shiftSummary.diff.toLocaleString('es-DO')}`,
+    });
+
+    const diffLabel =
+      shiftSummary.diff === 0
+        ? 'CUADRE EXACTO (RD$ 0.00)'
+        : shiftSummary.diff > 0
+        ? `SOBRANTE EN CAJA: +RD$ ${shiftSummary.diff.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`
+        : `FALTANTE EN CAJA: RD$ ${shiftSummary.diff.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`;
+
+    setCashShiftModalOpen(false);
+    setPrintData({
+      isFiscal: false,
+      brand: activeBrand,
+      corporate,
+      documentCode: `CORTE-${closeShiftType}-${String(shiftId).padStart(4, '0')}`,
+      customTitle:
+        closeShiftType === 'Z'
+          ? 'CIERRE DE CAJA DEL TURNO (CORTE Z)'
+          : 'ARQUEO PARCIAL DE CAJA (CORTE X)',
+      defaultFormat: 'THERMAL_80MM',
+      clientName: `Cajero: ${cashier.name} (${cashier.role})`,
+      createdAt: nowIso,
+      items: [
+        {
+          id: 'z-1',
+          description: 'Fondo Inicial de Caja (Apertura)',
+          quantity: 1,
+          unit: 'TURNO',
+          unitPrice: shiftSummary.initialNum,
+        },
+        {
+          id: 'z-2',
+          description: 'Ventas Cobradas en Efectivo',
+          quantity: 1,
+          unit: 'TURNO',
+          unitPrice: shiftSummary.totalCash,
+        },
+        {
+          id: 'z-3',
+          description: 'Ventas Cobradas con Tarjeta',
+          quantity: 1,
+          unit: 'TURNO',
+          unitPrice: shiftSummary.totalCard,
+        },
+        {
+          id: 'z-4',
+          description: 'Ventas por Transferencia Bancaria',
+          quantity: 1,
+          unit: 'TURNO',
+          unitPrice: shiftSummary.totalTransfer,
+        },
+      ],
+      subtotal: shiftSummary.totalSales,
+      itbisAmount: 0,
+      totalAmount: shiftSummary.totalSales,
+      amountPaid: shiftSummary.countedNum,
+      balanceDue: 0,
+      notes: `Efectivo Esperado en Gaveta: RD$ ${shiftSummary.expectedDrawerCash.toLocaleString('es-DO', { minimumFractionDigits: 2 })} | Efectivo Contado: RD$ ${shiftSummary.countedNum.toLocaleString('es-DO', { minimumFractionDigits: 2 })} | ${diffLabel}${
+        shiftNotes.trim() ? ` | Obs: ${shiftNotes.trim()}` : ''
+      }`,
+    });
+
+    showToast(
+      `Corte ${closeShiftType} registrado y listo para imprimir en 80mm.`
+    );
+  };
 
   // Historial reciente de ventas del POS en tiempo real
   const recentSales =
@@ -425,6 +605,7 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
       setPromoCodeInput('');
       setAppliedPromoCode('');
       setGlobalDiscountVal(0);
+      setMobileCartDrawerOpen(false);
       showToast(`Venta completada: ${emittedDoc.documentCode}`);
     } catch (err: unknown) {
       const msg =
@@ -546,17 +727,31 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
       {/* COLUMNA IZQUIERDA (7 COLS): REJILLA DE PRODUCTOS + HISTORIAL DEL TURNO */}
       <div className="lg:col-span-7 space-y-5">
         <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs space-y-3">
-          <div className="relative">
-            <Barcode className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              placeholder="Escanear código de barras o buscar equipo/producto (Enter para agregar)..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-slate-900"
-            />
-            <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Barcode className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="Escanear código o buscar producto (Enter para agregar)..."
+                className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShiftCountedCash(String(shiftSummary.expectedDrawerCash));
+                setCashShiftModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shrink-0 shadow-xs transition-colors"
+            >
+              <Calculator className="w-4 h-4 text-teal-400" />
+              <span>Corte de Caja / Cuadre (X/Z)</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
@@ -577,8 +772,8 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
           </div>
         </div>
 
-        {/* REJILLA DE PRODUCTOS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        {/* REJILLA DE PRODUCTOS (2 COLUMNAS COMPACTAS EN MÓVIL Y ESCRITORIO) */}
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
           {filteredProducts.map((product) => {
             const outOfStock =
               !product.isService &&
@@ -735,9 +930,15 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
         </div>
       </div>
 
-      {/* COLUMNA DERECHA (5 COLS): CARRITO EDITABLE Y TERMINAL DE COBRO */}
-      <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs flex flex-col overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      {/* COLUMNA DERECHA (5 COLS EN ESCRITORIO / DRAWER FULLSCREEN EN MÓVIL): CARRITO EDITABLE Y TERMINAL DE COBRO */}
+      <div
+        className={`${
+          mobileCartDrawerOpen
+            ? 'fixed inset-0 z-50 bg-white p-4 sm:p-5 overflow-y-auto flex flex-col'
+            : 'hidden lg:flex lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs flex-col overflow-hidden'
+        }`}
+      >
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShoppingBag className="w-4 h-4 text-slate-900" />
             <h3 className="text-sm font-bold text-slate-900">
@@ -783,6 +984,14 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
                 Vaciar
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setMobileCartDrawerOpen(false)}
+              className="lg:hidden p-1.5 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900"
+              title="Cerrar carrito móvil"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
@@ -1241,6 +1450,205 @@ export const RetailPOSView: React.FC<RetailPOSViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* BARRA FLOTANTE INFERIOR EN MÓVIL CUANDO HAY ÍTEMS EN EL CARRITO */}
+      {cart.length > 0 && !mobileCartDrawerOpen && (
+        <div className="fixed bottom-16 inset-x-3 z-30 lg:hidden p-3 rounded-2xl bg-slate-900 text-white flex items-center justify-between shadow-2xl border border-slate-700">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-teal-500 text-slate-950 font-mono font-extrabold text-xs flex items-center justify-center">
+              {cart.reduce((a, b) => a + b.quantity, 0)}
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-300 block">
+                Total en Carrito
+              </span>
+              <span className="text-sm font-mono font-extrabold text-white">
+                RD${' '}
+                {totals.totalAmount.toLocaleString('es-DO', {
+                  minimumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileCartDrawerOpen(true)}
+            className="px-4 py-2 rounded-xl bg-teal-400 hover:bg-teal-300 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shadow-sm"
+          >
+            <ShoppingBag className="w-4 h-4" />
+            <span>Cobrar / Ver Carrito</span>
+          </button>
+        </div>
+      )}
+
+      {/* MODAL DE CUADRE Y CIERRE DE CAJA DEL TURNO (CORTE X / Z) */}
+      {cashShiftModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Calculator className="w-4 h-4 text-teal-400" />
+                <div>
+                  <h3 className="text-sm font-bold">
+                    Corte de Caja / Cuadre del Turno (X / Z)
+                  </h3>
+                  <p className="text-[11px] text-slate-300">
+                    {activeBrand.name} • {shiftSummary.txCount} ventas hoy
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCashShiftModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                  <span className="text-[10px] font-bold uppercase text-emerald-700 block">
+                    Efectivo Ventas
+                  </span>
+                  <span className="font-mono font-extrabold text-sm text-emerald-950">
+                    RD${' '}
+                    {shiftSummary.totalCash.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-sky-50 border border-sky-200">
+                  <span className="text-[10px] font-bold uppercase text-sky-700 block">
+                    Tarjetas (POS)
+                  </span>
+                  <span className="font-mono font-extrabold text-sm text-sky-950">
+                    RD${' '}
+                    {shiftSummary.totalCard.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-purple-50 border border-purple-200">
+                  <span className="text-[10px] font-bold uppercase text-purple-700 block">
+                    Transferencias
+                  </span>
+                  <span className="font-mono font-extrabold text-sm text-purple-950">
+                    RD${' '}
+                    {shiftSummary.totalTransfer.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Fondo Inicial de Caja (RD$)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={shiftInitialCash}
+                    onChange={(e) => setShiftInitialCash(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-bold text-slate-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Efectivo Contado en Gaveta (RD$)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={shiftCountedCash}
+                    onChange={(e) => setShiftCountedCash(e.target.value)}
+                    placeholder={String(shiftSummary.expectedDrawerCash)}
+                    className="w-full px-3 py-2 rounded-xl border border-teal-500 bg-teal-50/30 font-mono font-bold text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 font-mono">
+                <div className="flex justify-between text-slate-600">
+                  <span>Efectivo Esperado (Fondo + Ventas Efec.):</span>
+                  <span className="font-bold text-slate-900">
+                    RD${' '}
+                    {shiftSummary.expectedDrawerCash.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Total General Ventas del Turno:</span>
+                  <span className="font-bold text-slate-900">
+                    RD${' '}
+                    {shiftSummary.totalSales.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-sm font-extrabold">
+                  <span>Diferencia (Sobrante / Faltante):</span>
+                  <span
+                    className={
+                      shiftSummary.diff === 0
+                        ? 'text-emerald-700'
+                        : shiftSummary.diff > 0
+                        ? 'text-sky-700'
+                        : 'text-rose-600'
+                    }
+                  >
+                    {shiftSummary.diff > 0 ? '+' : ''}RD${' '}
+                    {shiftSummary.diff.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                    })}{' '}
+                    {shiftSummary.diff === 0
+                      ? '(EXACTO)'
+                      : shiftSummary.diff > 0
+                      ? '(SOBRANTE)'
+                      : '(FALTANTE)'}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Observaciones del Cierre (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={shiftNotes}
+                  onChange={(e) => setShiftNotes(e.target.value)}
+                  placeholder="Ej: Turno matutino sin novedades"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => handleCloseShiftAndPrintZ('X')}
+                className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-800 flex items-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir Corte X (Parcial)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCloseShiftAndPrintZ('Z')}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs"
+              >
+                <Printer className="w-3.5 h-3.5 text-teal-400" />
+                <span>Cerrar Turno e Imprimir Ticket 80mm (Corte Z)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL CREACIÓN RÁPIDA DE CLIENTE */}
       {newClientModalOpen && (

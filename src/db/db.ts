@@ -61,6 +61,24 @@ export interface DiscountPromoCode {
   active: boolean;
 }
 
+export interface CashShift {
+  id?: number;
+  openedAt: string;
+  closedAt?: string;
+  cashierId: string;
+  cashierName: string;
+  brandId: BrandId;
+  initialCash: number;
+  totalCash: number;
+  totalCard: number;
+  totalTransfer: number;
+  totalSales: number;
+  countedCash?: number;
+  difference?: number;
+  status: 'OPEN' | 'CLOSED';
+  notes?: string;
+}
+
 export interface InvoiceItemExtra {
   id: string;
   name: string;
@@ -157,6 +175,7 @@ export interface IssuedDocument {
   taxableAmount: number;
   itbisAmount: number; // 0 en Modo Interno, 18% desglosado en Modo Fiscal
   legalTipAmount: number; // 10% opcional en Restaurante
+  voluntaryTipAmount?: number; // Propina Voluntaria / Extra Camarero (No altera base ITBIS ni 607)
   isrRetentionAmount?: number; // Para B11
   itbisRetentionAmount?: number; // Para B11
   totalAmount: number;
@@ -1178,6 +1197,7 @@ export class BridgePOSDatabase extends Dexie {
   staffUsers!: Table<StaffUser, string>;
   auditLogs!: Table<AuditLogEntry, number>;
   promoCodes!: Table<DiscountPromoCode, string>;
+  cashShifts!: Table<CashShift, number>;
 
   constructor() {
     super('BridgePOS_ERP_DB');
@@ -1229,6 +1249,23 @@ export class BridgePOSDatabase extends Dexie {
       staffUsers: 'id, role, active',
       auditLogs: '++id, timestamp, userId, userRole, brandId, action',
       promoCodes: 'code, active',
+    });
+
+    this.version(5).stores({
+      corporateConfig: 'id, rnc',
+      brands: 'id, name',
+      ncfSequences: 'type, authorizationNo, direction, isActive',
+      documents:
+        '++id, documentCode, brandId, isFiscal, ncfType, goesTo607, goesTo606, createdAt, syncStatus',
+      clients: '++id, name, rncOrCedula, phone, preferredNcfType',
+      catalogItems: '++id, brandId, code, name, category, isService, active',
+      serviceOrders:
+        '++id, orderCode, brandId, status, clientId, clientName, isFiscal, createdAt',
+      restaurantTables: 'id, zone, status',
+      staffUsers: 'id, role, active',
+      auditLogs: '++id, timestamp, userId, userRole, brandId, action',
+      promoCodes: 'code, active',
+      cashShifts: '++id, brandId, cashierId, status, openedAt, closedAt',
     });
 
     this.on('populate', async () => {

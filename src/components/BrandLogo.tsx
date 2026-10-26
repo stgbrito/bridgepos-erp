@@ -1,6 +1,15 @@
 import React from 'react';
 import { type BrandId } from '../db/db';
 
+declare global {
+  interface ImportMeta {
+    env: {
+      BASE_URL?: string;
+      [key: string]: unknown;
+    };
+  }
+}
+
 interface BrandLogoProps {
   brandId: BrandId;
   size?: 'sm' | 'md' | 'lg';
@@ -447,8 +456,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   // 3. SOLUCIONES BRITO Y METRO FOOD STATION
   const imgSrc =
     brandId === 'sb-mantenimiento'
-      ? './logos/sb-logo.png'
-      : './logos/metro-logo.png';
+      ? `${import.meta.env.BASE_URL}logos/sb-logo.png`
+      : `${import.meta.env.BASE_URL}logos/metro-logo.png`;
 
   const altText =
     brandId === 'sb-mantenimiento' ? 'Soluciones Brito' : 'Metro Food Station';

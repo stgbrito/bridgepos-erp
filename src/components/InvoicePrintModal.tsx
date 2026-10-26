@@ -63,6 +63,7 @@ export interface PrintableDocumentData {
   separateLaborAndMaterials?: boolean;
   itbisAmount: number;
   legalTipAmount?: number;
+  voluntaryTipAmount?: number;
   totalAmount: number;
   amountPaid: number;
   balanceDue: number;
@@ -95,8 +96,15 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   data,
   onClose,
 }) => {
+  const isMobileScreen =
+    typeof window !== 'undefined' && window.innerWidth < 640;
+
   const [format, setFormat] = useState<'A4' | 'THERMAL_80MM'>(
-    data?.isKitchenOrder ? 'THERMAL_80MM' : data?.defaultFormat || 'A4'
+    data?.isKitchenOrder
+      ? 'THERMAL_80MM'
+      : isMobileScreen
+      ? 'THERMAL_80MM'
+      : data?.defaultFormat || 'A4'
   );
   const [stationFilter, setStationFilter] = useState<'ALL' | 'COCINA' | 'BAR'>(
     'ALL'
@@ -107,8 +115,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
   useEffect(() => {
     if (data) {
+      const mobileNow =
+        typeof window !== 'undefined' && window.innerWidth < 640;
       setFormat(
-        data.isKitchenOrder ? 'THERMAL_80MM' : data.defaultFormat || 'A4'
+        data.isKitchenOrder
+          ? 'THERMAL_80MM'
+          : mobileNow
+          ? 'THERMAL_80MM'
+          : data.defaultFormat || 'A4'
       );
       setStationFilter('ALL');
       if (data.autoPrint) {
@@ -546,11 +560,11 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
       <div className="print-modal-container bg-slate-100 rounded-2xl border border-slate-200 shadow-2xl max-w-4xl w-full flex flex-col max-h-[92vh]">
         {/* BARRA SUPERIOR DE CONTROLES (NO SE IMPRIME) */}
-        <div className="no-print bg-white border-b border-slate-200 rounded-t-2xl px-6 py-4 flex flex-wrap items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="no-print bg-white border-b border-slate-200 rounded-t-2xl px-4 sm:px-6 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-bold text-slate-900">
               {data.isKitchenOrder
-                ? 'Comanda de Preparación (Cocina / Bar)'
+                ? 'Comanda (Cocina / Bar)'
                 : 'Vista de Impresión'}
             </span>
 
@@ -559,37 +573,37 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setStationFilter('ALL')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     stationFilter === 'ALL'
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <span>Todo (Cocina + Bar)</span>
+                  <span>Todo</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setStationFilter('COCINA')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     stationFilter === 'COCINA'
                       ? 'bg-amber-500 text-slate-950 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <ChefHat className="w-3.5 h-3.5" />
-                  <span>Solo Cocina</span>
+                  <span>Cocina</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setStationFilter('BAR')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     stationFilter === 'BAR'
                       ? 'bg-sky-600 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <Wine className="w-3.5 h-3.5" />
-                  <span>Solo Bar</span>
+                  <span>Bar</span>
                 </button>
               </div>
             ) : (
@@ -597,43 +611,52 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setFormat('A4')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     format === 'A4'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Hoja Carta / A4</span>
+                  <span>Carta / A4</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormat('THERMAL_80MM')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     format === 'THERMAL_80MM'
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <Receipt className="w-3.5 h-3.5" />
-                  <span>Ticket Térmico 80mm</span>
+                  <span>Ticket 80mm</span>
                 </button>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="sm:hidden p-2 rounded-xl text-slate-500 hover:text-slate-900 bg-slate-100"
+              title="Cerrar"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
             {!data.isKitchenOrder && (
               <>
                 <button
                   type="button"
                   disabled={isExporting}
                   onClick={handleSendWhatsAppWithPNG}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-semibold transition-colors shadow-xs"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-semibold transition-colors shadow-xs"
                   title="Copia la imagen al portapapeles (Ctrl+V), la descarga en PNG y abre WhatsApp"
                 >
-                  <MessageCircle className="w-4 h-4" />
-                  <ImageIcon className="w-3.5 h-3.5" />
+                  <MessageCircle className="w-4 h-4 shrink-0" />
+                  <ImageIcon className="w-3.5 h-3.5 shrink-0" />
                   <span>WhatsApp (PNG)</span>
                 </button>
 
@@ -641,10 +664,10 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                   type="button"
                   disabled={isExporting}
                   onClick={handleSendWhatsAppWithPDF}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-600 disabled:opacity-60 text-white text-xs font-semibold transition-colors shadow-xs"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl bg-teal-700 hover:bg-teal-600 disabled:opacity-60 text-white text-xs font-semibold transition-colors shadow-xs"
                   title="Genera el PDF del documento y abre WhatsApp"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5 shrink-0" />
                   <span>WhatsApp (PDF)</span>
                 </button>
               </>
@@ -653,9 +676,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition-colors shadow-xs"
+              className="col-span-2 sm:col-span-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold transition-colors shadow-xs"
             >
-              <Printer className="w-4 h-4" />
+              <Printer className="w-4 h-4 shrink-0" />
               <span>
                 {data.isKitchenOrder ? 'Imprimir Comanda 80mm' : 'Imprimir'}
               </span>
@@ -664,7 +687,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              className="hidden sm:inline-flex p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
               title="Cerrar"
             >
               <X className="w-5 h-5" />
@@ -672,14 +695,14 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           </div>
         </div>
 
-        {/* LIENZO DEL DOCUMENTO */}
-        <div className="print-modal-scroll p-6 overflow-y-auto flex justify-center">
+        {/* LIENZO DEL DOCUMENTO (PERMITE SCROLL HORIZONTAL LIMPIO EN A4 MÓVIL) */}
+        <div className="print-modal-scroll p-3 sm:p-6 overflow-y-auto overflow-x-auto flex justify-start sm:justify-center">
           <div
             ref={printableRef}
             id="invoice-print-area"
-            className={`bg-white text-slate-900 shadow-sm border border-slate-200/90 ${
+            className={`bg-white text-slate-900 shadow-sm border border-slate-200/90 mx-auto ${
               format === 'A4' && !data.isKitchenOrder
-                ? 'print-letter w-full max-w-3xl rounded-2xl p-8 sm:p-10'
+                ? 'print-letter min-w-[680px] sm:min-w-0 w-full max-w-3xl rounded-2xl p-6 sm:p-10'
                 : 'print-thermal w-[320px] rounded-xl px-4 py-5 text-[13px] leading-snug'
             }`}
           >
@@ -1192,13 +1215,27 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                       </div>
                     ) : null}
 
+                    {data.voluntaryTipAmount && data.voluntaryTipAmount > 0 ? (
+                      <div className="flex justify-between text-emerald-700 font-semibold py-0.5">
+                        <span>Propina Voluntaria / Mesero:</span>
+                        <span>
+                          RD${' '}
+                          {data.voluntaryTipAmount.toLocaleString('es-DO', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ) : null}
+
                     <div className="my-1.5 border-t border-slate-200" />
 
                     <div className="flex justify-between text-sm font-bold text-slate-900 py-0.5">
                       <span>{isPreCuenta ? 'TOTAL A PAGAR:' : 'Total Acordado:'}</span>
                       <span>
                         RD${' '}
-                        {data.totalAmount.toLocaleString('es-DO', {
+                        {(
+                          data.totalAmount + (data.voluntaryTipAmount || 0)
+                        ).toLocaleString('es-DO', {
                           minimumFractionDigits: 2,
                         })}
                       </span>
@@ -1210,7 +1247,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                           <span>Total Abonado:</span>
                           <span>
                             RD${' '}
-                            {data.amountPaid.toLocaleString('es-DO', {
+                            {(
+                              data.amountPaid + (data.voluntaryTipAmount || 0)
+                            ).toLocaleString('es-DO', {
                               minimumFractionDigits: 2,
                             })}
                           </span>
@@ -1443,11 +1482,25 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                     </div>
                   ) : null}
 
+                  {data.voluntaryTipAmount && data.voluntaryTipAmount > 0 ? (
+                    <div className="flex justify-between py-0.5">
+                      <span>Propina Voluntaria:</span>
+                      <span>
+                        RD${' '}
+                        {data.voluntaryTipAmount.toLocaleString('es-DO', {
+                          minimumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
+                  ) : null}
+
                   <div className="flex justify-between font-black text-sm text-black py-1 border-t border-black border-dashed mt-1">
                     <span>{isPreCuenta ? 'TOTAL A PAGAR:' : 'TOTAL:'}</span>
                     <span>
                       RD${' '}
-                      {data.totalAmount.toLocaleString('es-DO', {
+                      {(
+                        data.totalAmount + (data.voluntaryTipAmount || 0)
+                      ).toLocaleString('es-DO', {
                         minimumFractionDigits: 2,
                       })}
                     </span>
@@ -1459,7 +1512,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                         <span>Total Abonado:</span>
                         <span>
                           RD${' '}
-                          {data.amountPaid.toLocaleString('es-DO', {
+                          {(
+                            data.amountPaid + (data.voluntaryTipAmount || 0)
+                          ).toLocaleString('es-DO', {
                             minimumFractionDigits: 2,
                           })}
                         </span>

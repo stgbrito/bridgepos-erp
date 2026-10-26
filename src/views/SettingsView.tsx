@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Check,
+  Database,
+  Download,
   Edit3,
   FileText,
   History,
@@ -16,6 +18,7 @@ import {
   Shield,
   Tag,
   Trash2,
+  Upload,
   Users,
   UtensilsCrossed,
   X,
@@ -60,6 +63,7 @@ type SettingsTab =
   | 'PROMO_CODES'
   | 'RESTAURANT_TABLES'
   | 'AUDIT_LOGS'
+  | 'BACKUP_JSON'
   | 'INVOICE_PREVIEW';
 
 const MODULE_SWITCHES: {
@@ -238,6 +242,163 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       details: 'Mapa de mesas restaurado a los valores de fábrica',
     });
     showNotice('Mesas predeterminadas restauradas.');
+  };
+
+  // Exportar e Importar Copia de Seguridad Completa (.JSON)
+  const handleExportBackupJson = async () => {
+    try {
+      const payload = {
+        app: 'BridgePOS ERP',
+        version: 5,
+        exportedAt: new Date().toISOString(),
+        data: {
+          corporateConfig: await db.corporateConfig.toArray(),
+          brands: await db.brands.toArray(),
+          ncfSequences: await db.ncfSequences.toArray(),
+          documents: await db.documents.toArray(),
+          clients: await db.clients.toArray(),
+          catalogItems: await db.catalogItems.toArray(),
+          serviceOrders: await db.serviceOrders.toArray(),
+          restaurantTables: await db.restaurantTables.toArray(),
+          staffUsers: await db.staffUsers.toArray(),
+          auditLogs: await db.auditLogs.toArray(),
+          promoCodes: await db.promoCodes.toArray(),
+          cashShifts: await db.cashShifts.toArray(),
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `BridgePOS_Backup_${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      await logAuditAction({
+        brandId: activeBrand.id,
+        action: 'EXPORTAR_BACKUP_JSON',
+        details: `Copia de seguridad descargada: BridgePOS_Backup_${dateStr}.json`,
+      });
+      showNotice(`Respaldo BridgePOS_Backup_${dateStr}.json descargado.`);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : 'Error al exportar respaldo.';
+      showNotice(msg);
+    }
+  };
+
+  const handleImportBackupJson = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const rawText = await file.text();
+      const parsed = JSON.parse(rawText);
+      const tablesData = parsed?.data || parsed;
+
+      if (
+        !tablesData ||
+        typeof tablesData !== 'object' ||
+        (!Array.isArray(tablesData.brands) &&
+          !Array.isArray(tablesData.documents) &&
+          !Array.isArray(tablesData.clients))
+      ) {
+        showNotice('Archivo JSON inválido: no contiene tablas de BridgePOS.');
+        e.target.value = '';
+        return;
+      }
+
+      await db.transaction(
+        'rw',
+        [
+          db.corporateConfig,
+          db.brands,
+          db.ncfSequences,
+          db.documents,
+          db.clients,
+          db.catalogItems,
+          db.serviceOrders,
+          db.restaurantTables,
+          db.staffUsers,
+          db.auditLogs,
+          db.promoCodes,
+          db.cashShifts,
+        ],
+        async () => {
+          if (Array.isArray(tablesData.corporateConfig)) {
+            await db.corporateConfig.clear();
+            await db.corporateConfig.bulkPut(tablesData.corporateConfig);
+          }
+          if (Array.isArray(tablesData.brands)) {
+            await db.brands.clear();
+            await db.brands.bulkPut(tablesData.brands);
+          }
+          if (Array.isArray(tablesData.ncfSequences)) {
+            await db.ncfSequences.clear();
+            await db.ncfSequences.bulkPut(tablesData.ncfSequences);
+          }
+          if (Array.isArray(tablesData.documents)) {
+            await db.documents.clear();
+            await db.documents.bulkPut(tablesData.documents);
+          }
+          if (Array.isArray(tablesData.clients)) {
+            await db.clients.clear();
+            await db.clients.bulkPut(tablesData.clients);
+          }
+          if (Array.isArray(tablesData.catalogItems)) {
+            await db.catalogItems.clear();
+            await db.catalogItems.bulkPut(tablesData.catalogItems);
+          }
+          if (Array.isArray(tablesData.serviceOrders)) {
+            await db.serviceOrders.clear();
+            await db.serviceOrders.bulkPut(tablesData.serviceOrders);
+          }
+          if (Array.isArray(tablesData.restaurantTables)) {
+            await db.restaurantTables.clear();
+            await db.restaurantTables.bulkPut(tablesData.restaurantTables);
+          }
+          if (Array.isArray(tablesData.staffUsers)) {
+            await db.staffUsers.clear();
+            await db.staffUsers.bulkPut(tablesData.staffUsers);
+          }
+          if (Array.isArray(tablesData.auditLogs)) {
+            await db.auditLogs.clear();
+            await db.auditLogs.bulkPut(tablesData.auditLogs);
+          }
+          if (Array.isArray(tablesData.promoCodes)) {
+            await db.promoCodes.clear();
+            await db.promoCodes.bulkPut(tablesData.promoCodes);
+          }
+          if (Array.isArray(tablesData.cashShifts)) {
+            await db.cashShifts.clear();
+            await db.cashShifts.bulkPut(tablesData.cashShifts);
+          }
+        }
+      );
+
+      await logAuditAction({
+        brandId: activeBrand.id,
+        action: 'RESTAURAR_BACKUP_JSON',
+        details: `Base de datos restaurada desde archivo: ${file.name}`,
+      });
+      e.target.value = '';
+      showNotice('Base de datos restaurada exitosamente desde el archivo JSON.');
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Error al restaurar el archivo JSON.';
+      showNotice(msg);
+      e.target.value = '';
+    }
   };
 
   const handleStartEdit = (seq: NCFSequence) => {
@@ -489,6 +650,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           >
             <History className="w-4 h-4" />
             <span>Bitácora de Auditoría</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('BACKUP_JSON')}
+            className={`inline-flex items-center gap-2 pb-3 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'BACKUP_JSON'
+                ? 'border-slate-900 text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            <span>Respaldo / Backup JSON</span>
           </button>
 
           <button
@@ -1633,6 +1807,76 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: RESPALDO / BACKUP Y RESTAURACIÓN (.JSON) */}
+      {activeTab === 'BACKUP_JSON' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* EXPORTAR BACKUP JSON */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs flex flex-col justify-between gap-5">
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center">
+                <Download className="w-5 h-5 text-teal-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Descargar Copia de Seguridad Completa (.JSON)
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Exporta todas las tablas de IndexedDB (Secuencias NCF,
+                  Comprobantes Emitidos, Clientes, Catálogo, Órdenes de Servicio,
+                  Mesas, Usuarios, Bitácora, Códigos Promocionales y Cortes de
+                  Caja) en un archivo portable{' '}
+                  <code className="font-mono text-slate-800">
+                    BridgePOS_Backup_YYYY-MM-DD.json
+                  </code>
+                  .
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleExportBackupJson}
+              className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-teal-400" />
+              <span>Descargar Copia de Seguridad (.json)</span>
+            </button>
+          </div>
+
+          {/* IMPORTAR / RESTAURAR BACKUP JSON */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs flex flex-col justify-between gap-5">
+            <div className="space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                <Upload className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Restaurar Base de Datos (.JSON)
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                  Carga un archivo{' '}
+                  <code className="font-mono text-slate-800">.json</code>{' '}
+                  generado previamente por BridgePOS para migrar entre
+                  computadoras, tablets o celulares sin perder secuencias NCF ni
+                  historial fiscal.
+                </p>
+              </div>
+            </div>
+
+            <label className="w-full py-3 px-4 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-900 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer">
+              <Upload className="w-4 h-4 text-slate-700" />
+              <span>Seleccionar Archivo .json para Restaurar</span>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleImportBackupJson}
+                className="hidden"
+              />
+            </label>
           </div>
         </div>
       )}

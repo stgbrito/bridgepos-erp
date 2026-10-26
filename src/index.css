@@ -29,7 +29,7 @@
 /* Nitidez térmica en pantalla y al imprimir */
 #invoice-print-area.print-thermal,
 #invoice-print-area.print-thermal * {
-  font-family: 'Consolas', 'Courier New', monospace !important;
+  font-family: 'Consolas', 'Courier New', 'Lucida Console', monospace !important;
   -webkit-font-smoothing: none !important;
   -moz-osx-font-smoothing: grayscale !important;
   font-smooth: never !important;
@@ -96,7 +96,7 @@
   }
   #invoice-print-area.print-thermal,
   #invoice-print-area.print-thermal * {
-    font-family: 'Consolas', 'Courier New', monospace !important;
+    font-family: 'Consolas', 'Courier New', 'Lucida Console', monospace !important;
     -webkit-font-smoothing: none !important;
     font-smooth: never !important;
     text-rendering: optimizeSpeed !important;

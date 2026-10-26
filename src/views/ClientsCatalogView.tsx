@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import {
   Check,
   Edit3,
@@ -104,6 +105,10 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
   const [activeTab, setActiveTab] = useState<'CATALOG' | 'CLIENTS'>('CATALOG');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Órdenes de Servicio para calcular Estado de Cuenta / Balance Pendiente (Cuentas por Cobrar)
+  const serviceOrders =
+    useLiveQuery(() => db.serviceOrders.toArray(), []) ?? [];
 
   // Modal de Catálogo (Crear / Editar Servicio o Producto)
   const [itemModalOpen, setItemModalOpen] = useState<boolean>(false);
@@ -517,12 +522,25 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
             const waPhone =
               cleanDigits.length === 10 ? `1${cleanDigits}` : cleanDigits;
 
+            const clientOpenOrders = serviceOrders.filter(
+              (o) =>
+                o.status !== 'COTIZACION' &&
+                o.balanceDue > 0 &&
+                (o.clientId === client.id ||
+                  o.clientName.trim().toLowerCase() ===
+                    client.name.trim().toLowerCase())
+            );
+            const totalPendingBalance = clientOpenOrders.reduce(
+              (acc, o) => acc + o.balanceDue,
+              0
+            );
+
             return (
               <div
                 key={client.id}
                 className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col justify-between gap-4"
               >
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h4 className="text-sm font-bold text-slate-900">
@@ -535,13 +553,49 @@ export const ClientsCatalogView: React.FC<ClientsCatalogViewProps> = ({
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 font-mono font-bold text-[11px]">
-                      NCF Pref: {client.preferredNcfType}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 font-mono font-bold text-[11px]">
+                        NCF Pref: {client.preferredNcfType}
+                      </span>
+                      {totalPendingBalance > 0 && (
+                        <span className="px-2.5 py-0.5 rounded-md bg-amber-100 border border-amber-300 text-amber-900 font-mono font-bold text-[11px]">
+                          Pendiente: RD${' '}
+                          {totalPendingBalance.toLocaleString('es-DO', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {client.notes && (
                     <p className="text-xs text-slate-500">{client.notes}</p>
+                  )}
+
+                  {clientOpenOrders.length > 0 && (
+                    <div className="rounded-xl bg-amber-50/70 border border-amber-200/90 p-3 space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 block">
+                        Estado de Cuenta • Órdenes Abiertas ({clientOpenOrders.length})
+                      </span>
+                      <div className="space-y-1">
+                        {clientOpenOrders.map((ord) => (
+                          <div
+                            key={ord.id}
+                            className="flex items-center justify-between text-[11px] font-mono text-amber-950"
+                          >
+                            <span className="truncate pr-2">
+                              {ord.orderCode} • {ord.status}
+                            </span>
+                            <span className="font-bold shrink-0">
+                              RD${' '}
+                              {ord.balanceDue.toLocaleString('es-DO', {
+                                minimumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
 
                   {client.measurements && (

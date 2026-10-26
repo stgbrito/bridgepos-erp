@@ -607,6 +607,7 @@ export async function issueDocumentTransaction(params: {
   paymentMethod?: PaymentMethod;
   items: InvoiceItem[];
   includeLegalTip?: boolean;
+  voluntaryTipAmount?: number;
   depositPercentage?: number;
   globalDiscount?: number;
   forceZeroTaxes?: boolean;
@@ -675,6 +676,10 @@ export async function issueDocumentTransaction(params: {
         taxableAmount: totals.taxableBase,
         itbisAmount: totals.itbisAmount,
         legalTipAmount: totals.legalTipAmount,
+        voluntaryTipAmount:
+          params.voluntaryTipAmount && params.voluntaryTipAmount > 0
+            ? roundCurrency(params.voluntaryTipAmount)
+            : undefined,
         totalAmount: totals.totalAmount,
         amountPaid: totals.amountToPayNow,
         balanceDue: totals.balanceDue,

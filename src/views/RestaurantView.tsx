@@ -182,6 +182,14 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
   const [splitCount, setSplitCount] = useState<number>(2);
   const [selectedSplitItemIds, setSelectedSplitItemIds] = useState<string[]>([]);
 
+  // Pestaña Móvil Activa para Camareros (< 1024px)
+  const [mobileSectionTab, setMobileSectionTab] = useState<
+    'TABLES' | 'MENU' | 'BILL'
+  >('TABLES');
+
+  // Propina Voluntaria / Extra Camarero (No altera base ITBIS ni 607)
+  const [voluntaryTipInput, setVoluntaryTipInput] = useState<string>('');
+
   // Modal de Nueva Mesa
   const [showNewTableModal, setShowNewTableModal] = useState(false);
   const [newTableName, setNewTableName] = useState('');
@@ -813,7 +821,10 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
     });
 
     const ways = splitMode === 'PARTS' ? Math.max(2, splitCount) : 1;
-    const perPerson = roundCurrency(tableTotals.totalAmount / ways);
+    const voluntaryTipNum = Math.max(0, roundCurrency(Number(voluntaryTipInput) || 0));
+    const perPerson = roundCurrency(
+      (tableTotals.totalAmount + voluntaryTipNum) / ways
+    );
 
     setPrintDoc({
       isFiscal: false,
@@ -832,6 +843,7 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
       promoCodeApplied: appliedPromoCode || undefined,
       itbisAmount: tableTotals.itbisAmount,
       legalTipAmount: tableTotals.legalTipAmount,
+      voluntaryTipAmount: voluntaryTipNum > 0 ? voluntaryTipNum : undefined,
       totalAmount: tableTotals.totalAmount,
       amountPaid: 0,
       balanceDue: 0,
@@ -888,6 +900,11 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
           ? 0
           : computedGlobalDiscount;
 
+      const voluntaryTipNum = Math.max(
+        0,
+        roundCurrency(Number(voluntaryTipInput) || 0)
+      );
+
       const issued = await issueDocumentTransaction({
         brandId: activeBrand.id,
         moduleUsed: 'RESTAURANT_MODULE',
@@ -900,6 +917,7 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         paymentMethod,
         items: activeCheckoutItems,
         includeLegalTip: activeTable.includeLegalTip,
+        voluntaryTipAmount: voluntaryTipNum > 0 ? voluntaryTipNum : undefined,
         depositPercentage: 100,
         globalDiscount: shareDiscount,
         forceZeroTaxes: !isFiscal || exemptItbisOnTable,
@@ -909,7 +927,11 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         user: currentUser,
         brandId: activeBrand.id,
         action: 'COBRO_RESTAURANTE',
-        details: `${activeTable.name} • ${issued.documentCode} • Total RD$ ${issued.totalAmount} (Mesero: ${activeTable.waiterName})`,
+        details: `${activeTable.name} • ${issued.documentCode} • Total RD$ ${issued.totalAmount}${
+          voluntaryTipNum > 0
+            ? ` (+Propina Extra Mesero RD$ ${voluntaryTipNum})`
+            : ''
+        } (Mesero: ${activeTable.waiterName})`,
       });
 
       if (checkoutType === 'SELECTED_ITEMS') {
@@ -952,6 +974,7 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         setGlobalDiscountVal(0);
       }
 
+      setVoluntaryTipInput('');
       setShowCheckoutModal(false);
 
       const seqUsed = isFiscal
@@ -977,6 +1000,7 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         promoCodeApplied: appliedPromoCode || undefined,
         itbisAmount: issued.itbisAmount,
         legalTipAmount: issued.legalTipAmount,
+        voluntaryTipAmount: issued.voluntaryTipAmount,
         totalAmount: issued.totalAmount,
         amountPaid: issued.amountPaid,
         balanceDue: 0,
@@ -1075,10 +1099,59 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         </div>
       </div>
 
+      {/* PESTAÑAS SUPERIORES RÁPIDAS EN MÓVIL (< 1024px) PARA CAMAREROS */}
+      <div className="lg:hidden grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-slate-200/80 border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setMobileSectionTab('TABLES')}
+          className={`py-2 px-2 rounded-xl text-xs font-bold transition-all ${
+            mobileSectionTab === 'TABLES'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          🗺️ Mesas ({tables.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileSectionTab('MENU')}
+          className={`py-2 px-2 rounded-xl text-xs font-bold transition-all ${
+            mobileSectionTab === 'MENU'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          🍔 Menú
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileSectionTab('BILL')}
+          className={`py-2 px-2 rounded-xl text-xs font-bold transition-all ${
+            mobileSectionTab === 'BILL'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          🧾 Cuenta (
+          {activeTable
+            ? activeTable.items.reduce((a, b) => a + b.quantity, 0)
+            : 0}
+          )
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* COLUMNA IZQUIERDA (7 COLS): MAPA DE MESAS + MENÚ RÁPIDO */}
-        <div className="lg:col-span-7 space-y-6">
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs">
+        <div
+          className={`lg:col-span-7 space-y-6 ${
+            mobileSectionTab === 'BILL' ? 'hidden lg:block' : 'block'
+          }`}
+        >
+          <div
+            className={`bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs ${
+              mobileSectionTab === 'TABLES' ? 'block' : 'hidden lg:block'
+            }`}
+          >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 Mapa de Mesas ({selectedZone === 'ALL' ? 'General' : selectedZone})
@@ -1201,7 +1274,11 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
           </div>
 
           {/* Menú Rápido de Platos con Buscador y Categorías */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs">
+          <div
+            className={`bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs ${
+              mobileSectionTab === 'MENU' ? 'block' : 'hidden lg:block'
+            }`}
+          >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
               <div>
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1286,7 +1363,11 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
         </div>
 
         {/* COLUMNA DERECHA (5 COLS): COMANDA DE MESA, FLUJO BAR/COCINA, EXTRAS Y COBRO */}
-        <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden sticky top-20">
+        <div
+          className={`lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden sticky top-20 ${
+            mobileSectionTab === 'BILL' ? 'block' : 'hidden lg:block'
+          }`}
+        >
           {!activeTable ? (
             <div className="p-12 text-center">
               <Utensils className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -2471,6 +2552,34 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
                 </span>
               </div>
 
+              {/* Propina Voluntaria / Extra Mesero (RD$) */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <label className="font-semibold text-slate-700">
+                  Propina Voluntaria / Extra Mesero (RD$):
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={50}
+                  value={voluntaryTipInput}
+                  onChange={(e) => setVoluntaryTipInput(e.target.value)}
+                  placeholder="0.00"
+                  className="w-28 px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-right font-mono font-bold text-slate-900 text-xs"
+                />
+              </div>
+
+              {Number(voluntaryTipInput) > 0 && (
+                <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900">
+                  <span>Total Final + Propina Voluntaria:</span>
+                  <span className="font-mono">
+                    {formatMoney(
+                      checkoutTotals.totalAmount +
+                        Math.max(0, Number(voluntaryTipInput) || 0)
+                    )}
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   Datos del Comensal / Cliente
@@ -2565,6 +2674,41 @@ export const RestaurantView: React.FC<RestaurantViewProps> = ({
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BARRA FLOTANTE INFERIOR EN MÓVIL CUANDO HAY MESA ACTIVA */}
+      {activeTable && activeTable.items.length > 0 && (
+        <div className="fixed bottom-16 inset-x-3 z-30 lg:hidden bg-slate-900 text-white rounded-2xl p-3 shadow-2xl flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="text-[11px] font-bold text-amber-400 block truncate">
+              {activeTable.name} • {activeTable.items.length} ítems
+            </span>
+            <span className="text-sm font-mono font-extrabold text-white">
+              {formatMoney(tableTotals.totalAmount)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleSendKitchenCommand('ALL')}
+              className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Comandar Nuevos</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMobileSectionTab('BILL');
+                openCheckoutWithMode('FULL');
+              }}
+              className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Ver Cuenta / Cobrar</span>
+            </button>
           </div>
         </div>
       )}
